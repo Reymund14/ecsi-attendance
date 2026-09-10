@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL Database ────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: ecsi_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ecsi_user
+      POSTGRES_PASSWORD: ecsi_pass
+      POSTGRES_DB: ecsi_attendance
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecsi_user -d ecsi_attendance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ecsi_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ecsi_user:ecsi_pass@db:5432/ecsi_attendance
+      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION}
+      DEBUG: "false"
+      CAMERA_SOURCE: "0"
+      RFID_MODE: "USB_HID"
+    volumes:
+      - ./backend:/app
+      - audit_captures:/app/audit_captures
+      - profile_photos:/app/static/profiles
+    ports:
+      - "8000:8000"
+    # Pass through USB devices for RFID + camera
+    devices:
+      - "/dev/video0:/dev/video0"   # USB webcam
+    command: >
+      uvicorn main:app
+        --host 0.0.0.0
+        --port 8000
+        --workers 1
+        --loop asyncio
+
+  # ── React Frontend (Vite dev server) ──────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ecsi_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      VITE_WS_URL: ws://localhost:8000/ws/dashboard
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  pgdata:
+  audit_captures:
+  profile_photos:

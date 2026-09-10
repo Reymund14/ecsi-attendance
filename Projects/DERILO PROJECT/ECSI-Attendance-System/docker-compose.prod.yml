@@ -1,0 +1,46 @@
+# Production overrides — use alongside base docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+version: "3.9"
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  db:
+    environment:
+      POSTGRES_USER: ${DB_USER:-ecsi_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}      # required — set in .env.production
+      POSTGRES_DB: ${DB_NAME:-ecsi_attendance}
+    ports: []                                # don't expose DB port publicly
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-ecsi_user}:${DB_PASSWORD}@db:5432/${DB_NAME:-ecsi_attendance}
+      SECRET_KEY: ${SECRET_KEY}              # required — set in .env.production
+      DEBUG: "false"
+      CAMERA_SOURCE: ${CAMERA_SOURCE:-0}
+      RFID_MODE: ${RFID_MODE:-USB_HID}
+    volumes:
+      # In production, don't mount source — use the baked image
+      - audit_captures:/app/audit_captures
+      - profile_photos:/app/static/profiles
+    ports: []                                # backend is internal; Nginx proxies it
+
+  # ── Frontend (production build served by Nginx) ────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_BASE_URL: ${PUBLIC_URL}/api/v1
+        VITE_WS_URL: ${PUBLIC_WS_URL}/ws/dashboard
+    volumes: []                              # no source mount — static files are baked in
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  audit_captures:
+  profile_photos:
