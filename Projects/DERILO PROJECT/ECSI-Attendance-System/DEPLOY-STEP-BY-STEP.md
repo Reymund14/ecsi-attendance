@@ -1,6 +1,13 @@
 # ECSI Attendance System — Full Deployment Guide
 # Supabase (DB) + Cloudflare Tunnel (Backend) + Vercel (Frontend)
 
+> **Superseded.** This guide runs the backend on your own machine behind a
+> Cloudflare Tunnel, which means the machine must stay awake with the webcam and
+> RFID reader plugged in. The supported cloud topology hosts the API on Render
+> instead — see **[DEPLOYMENT.md](./DEPLOYMENT.md)** for Vercel + Render +
+> Supabase, including the `VITE_API_BASE_URL` / `VITE_WS_URL` build variables
+> and the slim `requirements-render.txt`.
+
 ---
 
 ## Overview

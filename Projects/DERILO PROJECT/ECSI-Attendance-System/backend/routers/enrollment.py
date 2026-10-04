@@ -5,7 +5,7 @@ Enrollment Router — RFID card binding + face capture / re-enrollment
 import uuid
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,10 +14,41 @@ from database import get_db
 from middleware.rbac import get_current_user, require_faculty_or_above, require_super_admin
 from models.user import User, RFIDCard, FaceEmbedding
 from schemas.user import RFIDBindRequest, RFIDOut, FaceEmbeddingOut
-from services.face_service import FaceService
+from services import storage
+from services.face_service import FaceService, face_pipeline_available
 
 router = APIRouter()
 face_service = FaceService()
+
+
+@router.delete("/{user_id}/face", status_code=204, dependencies=[Depends(require_super_admin)])
+async def delete_face(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Remove a user's face template.
+
+    Only the biometric embedding is deleted. The profile photo in the photos
+    bucket is a separate, user-managed asset, so it is deliberately left in
+    place.
+    """
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
+    user_id = str(user_id)
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    result = await db.execute(
+        select(FaceEmbedding).where(FaceEmbedding.user_id == user_id)
+    )
+    embedding = result.scalar_one_or_none()
+    if not embedding:
+        raise HTTPException(status_code=404, detail="No face template found for this user.")
+
+    await db.delete(embedding)
+    return Response(status_code=204)
 
 
 # ── RFID: Bind card to user ───────────────────────────────────────────────────
@@ -27,6 +58,9 @@ async def bind_rfid(
     body: RFIDBindRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    user_id = str(user_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     # Ensure user exists
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -61,6 +95,9 @@ async def bind_rfid(
 # ── RFID: Deactivate card ─────────────────────────────────────────────────────
 @router.delete("/{user_id}/rfid", dependencies=[Depends(require_super_admin)])
 async def deactivate_rfid(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    user_id = str(user_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     result = await db.execute(select(RFIDCard).where(RFIDCard.user_id == user_id))
     card = result.scalar_one_or_none()
     if not card:
@@ -82,10 +119,26 @@ async def enroll_face(
     embedding, and stores it in the database. Students enroll themselves;
     faculty/admin can enroll any user.
     """
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
+    user_id = str(user_id)
     from models.user import UserRole
 
     if current_user.role == UserRole.STUDENT and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="Students may only enroll their own face.")
+
+    # The cloud deployment ships without OpenCV/DeepFace (see
+    # requirements-render.txt). Fail with 503 + a clear cause instead of a
+    # misleading 422 "no valid faces detected".
+    if not face_pipeline_available():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Face enrollment is unavailable: the biometric pipeline (OpenCV/DeepFace) "
+                "is not installed on this server. Run it on an edge host with a camera, "
+                "or install requirements.txt."
+            ),
+        )
 
     if not (1 <= len(frames) <= 10):
         raise HTTPException(status_code=400, detail="Provide between 1 and 10 face images.")
@@ -98,6 +151,15 @@ async def enroll_face(
 
     # Read all frame bytes
     frame_bytes_list = [await f.read() for f in frames]
+
+    # Verify the bytes really are images before spending CPU on inference. The
+    # client-supplied content_type is untrusted.
+    for idx, frame_bytes in enumerate(frame_bytes_list):
+        if storage.sniff_image(frame_bytes) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Frame {idx + 1} is not a valid JPEG, PNG or WEBP image.",
+            )
 
     # Generate mean embedding via AI pipeline
     try:
@@ -130,6 +192,9 @@ async def enroll_face(
 # ── Face Enrollment Status ────────────────────────────────────────────────────
 @router.get("/{user_id}/status", dependencies=[Depends(require_faculty_or_above)])
 async def enrollment_status(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    user_id = str(user_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     result = await db.execute(
         select(User)
         .options(selectinload(User.rfid_card), selectinload(User.face_embedding))

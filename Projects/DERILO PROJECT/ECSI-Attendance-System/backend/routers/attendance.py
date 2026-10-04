@@ -11,11 +11,13 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from config import settings
 from database import get_db
-from middleware.rbac import get_current_user, require_faculty_or_above
-from models.attendance import AttendanceRecord, AttendanceStatus
+from middleware.rbac import get_current_user, require_faculty_or_above, require_super_admin
+from models.attendance import AttendanceRecord, AttendanceStatus, ProxyAuditLog
 from models.user import User, UserRole
-from schemas.attendance import AttendanceOut, AttendanceOverrideRequest
+from schemas.attendance import AttendanceOut, AttendanceOverrideRequest, CaptureAccessOut
+from services import storage
 from websocket.manager import ws_manager
 
 router = APIRouter()
@@ -68,12 +70,74 @@ async def list_attendance(
 
 
 # ── Get single record ─────────────────────────────────────────────────────────
+# ── Private capture access (super admin only) ────────────────────────────────
+# Audit captures live in a PRIVATE bucket, so the stored KEY is useless on its
+# own: these endpoints mint a short-lived signed URL. Super-admin only, because
+# proxy/intruder images are sensitive.
+@router.get("/{record_id}/capture", response_model=CaptureAccessOut,
+            dependencies=[Depends(require_super_admin)])
+async def get_record_capture(record_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    record_id = str(record_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
+    record = await db.get(AttendanceRecord, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Attendance record not found.")
+    if not record.captured_frame_path:
+        raise HTTPException(status_code=404, detail="No capture stored for this record.")
+
+    url = await storage.capture_signed_url(record.captured_frame_path)
+    if not url:
+        raise HTTPException(status_code=410, detail="Stored capture is no longer available.")
+
+    return CaptureAccessOut(
+        record_id=record.id,
+        kind="captured",
+        key=record.captured_frame_path,
+        url=url,
+        expires_in=settings.SIGNED_URL_TTL_SECONDS,
+    )
+
+
+@router.get("/{record_id}/intruder", response_model=CaptureAccessOut,
+            dependencies=[Depends(require_super_admin)])
+async def get_record_intruder(record_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    record_id = str(record_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
+    record = await db.get(AttendanceRecord, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Attendance record not found.")
+
+    result = await db.execute(
+        select(ProxyAuditLog).where(ProxyAuditLog.attendance_record_id == record_id)
+    )
+    log = result.scalar_one_or_none()
+    if not log or not log.intruder_image_path:
+        raise HTTPException(status_code=404, detail="No intruder image for this record.")
+
+    url = await storage.capture_signed_url(log.intruder_image_path)
+    if not url:
+        raise HTTPException(status_code=410, detail="Stored intruder image is no longer available.")
+
+    return CaptureAccessOut(
+        record_id=record.id,
+        kind="intruder",
+        key=log.intruder_image_path,
+        url=url,
+        expires_in=settings.SIGNED_URL_TTL_SECONDS,
+    )
+
+
 @router.get("/{record_id}", response_model=AttendanceOut)
 async def get_attendance_record(
     record_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    record_id = str(record_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     result = await db.execute(
         select(AttendanceRecord)
         .options(selectinload(AttendanceRecord.user))
@@ -102,6 +166,9 @@ async def override_attendance(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    record_id = str(record_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     result = await db.execute(
         select(AttendanceRecord)
         .options(selectinload(AttendanceRecord.user))

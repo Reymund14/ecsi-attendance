@@ -2,23 +2,28 @@
 RBAC Middleware — FastAPI dependency injectors for role-based access control.
 """
 
-from typing import List
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database import get_db
 from models.user import User, UserRole, AccountStatus
 from utils.security import decode_token
 
-security = HTTPBearer()
+# auto_error=False: FastAPI's HTTPBearer otherwise answers a *missing*
+# Authorization header with 403, so the 401 (+ WWW-Authenticate) below would
+# never run. RFC 6750 requires 401 for absent/invalid credentials and reserves
+# 403 for a valid token lacking permission.
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Validate JWT and return the authenticated User ORM object."""
@@ -27,6 +32,8 @@ async def get_current_user(
         detail="Invalid or expired authentication token.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if credentials is None or not credentials.credentials:
+        raise exc
     try:
         payload = decode_token(credentials.credentials)
         user_id: str = payload.get("sub")
@@ -35,7 +42,15 @@ async def get_current_user(
     except JWTError:
         raise exc
 
-    result = await db.execute(select(User).where(User.id_number == user_id))
+    # selectinload is required: UserOut.from_orm_extended reads user.rfid_card
+    # and user.face_embedding, and a lazy load on an AsyncSession raises
+    # MissingGreenlet (-> HTTP 500). Load them up front so current_user is safe
+    # to use in any router.
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.rfid_card), selectinload(User.face_embedding))
+        .where(User.id_number == user_id)
+    )
     user = result.scalar_one_or_none()
 
     if user is None:

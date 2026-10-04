@@ -6,20 +6,74 @@ Cosine distance threshold: <= 0.40 → MATCH (positive identity).
 
 import io
 import logging
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
-import cv2
-import numpy as np
+if TYPE_CHECKING:  # numpy only needed for type hints
+    import numpy as np
 
 logger = logging.getLogger("ecsi.face")
 
-# DeepFace import is lazy to allow the app to start even if GPU is not available
-try:
-    from deepface import DeepFace
-    _DEEPFACE_AVAILABLE = True
-except ImportError:
-    _DEEPFACE_AVAILABLE = False
-    logger.warning("DeepFace not installed — face verification will be unavailable.")
+# OpenCV, NumPy and DeepFace are imported lazily. The cloud deployment (Render)
+# serves the dashboard / auth / CRUD paths only and does NOT install the ~1GB
+# computer-vision stack, so these must not be required at import time.
+_CV = None
+_NP = None
+_DEEPFACE = None
+_DEEPFACE_IMPORT_FAILED = False
+
+
+def _cv():
+    """Import cv2 on first use. Raises RuntimeError with an actionable message."""
+    global _CV
+    if _CV is None:
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError(
+                "OpenCV is not installed. Face enrollment/verification is unavailable. "
+                "Install the CV extras: pip install -r requirements.txt"
+            ) from exc
+        _CV = cv2
+    return _CV
+
+
+def _np():
+    """Import numpy on first use. Raises RuntimeError with an actionable message."""
+    global _NP
+    if _NP is None:
+        try:
+            import numpy
+        except ImportError as exc:
+            raise RuntimeError(
+                "NumPy is not installed. Face enrollment/verification is unavailable. "
+                "Install the CV extras: pip install -r requirements.txt"
+            ) from exc
+        _NP = numpy
+    return _NP
+
+
+def _deepface():
+    """
+    Import DeepFace on first use. Returns None when unavailable so callers can
+    degrade gracefully instead of crashing.
+    """
+    global _DEEPFACE, _DEEPFACE_IMPORT_FAILED
+    if _DEEPFACE is None and not _DEEPFACE_IMPORT_FAILED:
+        try:
+            from deepface import DeepFace
+            _DEEPFACE = DeepFace
+        except ImportError:
+            _DEEPFACE_IMPORT_FAILED = True
+            logger.warning(
+                "DeepFace not installed — face verification will be unavailable. "
+                "Install the CV extras: pip install -r requirements.txt"
+            )
+    return _DEEPFACE
+
+
+def face_pipeline_available() -> bool:
+    """True when the full biometric pipeline can run on this host."""
+    return _deepface() is not None
 
 
 class FaceService:
@@ -36,7 +90,8 @@ class FaceService:
 
     # ── Internal: bytes → BGR numpy array ────────────────────────────────────
     @staticmethod
-    def _bytes_to_bgr(image_bytes: bytes) -> np.ndarray:
+    def _bytes_to_bgr(image_bytes: bytes) -> "np.ndarray":
+        cv2, np = _cv(), _np()
         arr = np.frombuffer(image_bytes, dtype=np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img is None:
@@ -44,9 +99,11 @@ class FaceService:
         return img
 
     # ── Internal: extract embedding from BGR image ────────────────────────────
-    def _extract_embedding(self, bgr_image: np.ndarray) -> np.ndarray:
-        if not _DEEPFACE_AVAILABLE:
-            raise RuntimeError("DeepFace is not installed. Run: pip install deepface")
+    def _extract_embedding(self, bgr_image: "np.ndarray") -> "np.ndarray":
+        DeepFace = _deepface()
+        cv2, np = _cv(), _np()
+        if DeepFace is None:
+            raise RuntimeError("DeepFace is not installed. Run: pip install -r requirements.txt")
 
         # DeepFace.represent expects RGB
         rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
@@ -75,7 +132,8 @@ class FaceService:
         if not frame_bytes_list:
             raise ValueError("At least one frame is required for enrollment.")
 
-        embeddings: List[np.ndarray] = []
+        np = _np()
+        embeddings: List["np.ndarray"] = []
         errors: List[str] = []
 
         for idx, frame_bytes in enumerate(frame_bytes_list):
@@ -110,6 +168,7 @@ class FaceService:
         Returns (is_match: bool, cosine_distance: float).
         cosine_distance <= threshold → MATCH.
         """
+        np = _np()
         bgr = self._bytes_to_bgr(live_frame_bytes)
 
         try:
@@ -142,11 +201,13 @@ class FaceService:
         return is_match, round(cosine_distance, 6)
 
     # ── Utility: crop face ROI from frame ─────────────────────────────────────
-    def crop_face(self, bgr_image: np.ndarray) -> Optional[np.ndarray]:
+    def crop_face(self, bgr_image: "np.ndarray") -> Optional["np.ndarray"]:
         """Return the cropped face region or None if no face found."""
         try:
-            if not _DEEPFACE_AVAILABLE:
+            DeepFace = _deepface()
+            if DeepFace is None:
                 return None
+            cv2 = _cv()
             rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
             faces = DeepFace.extract_faces(
                 img_path=rgb,
@@ -155,7 +216,7 @@ class FaceService:
             )
             if not faces:
                 return None
-            face_data = max(faces, key=lambda f: f.get("facial_area", {}).get("w", 0))
+            face_data = max(faces, key=lambda f: f["facial_area"]["w"])
             fa = face_data["facial_area"]
             x, y, w, h = fa["x"], fa["y"], fa["w"], fa["h"]
             return bgr_image[max(0, y):y + h, max(0, x):x + w]

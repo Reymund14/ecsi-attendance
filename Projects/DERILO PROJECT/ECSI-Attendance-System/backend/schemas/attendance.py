@@ -54,6 +54,25 @@ class ProxyAuditOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Capture access (private bucket → short-lived signed URL) ──────────────────
+class CaptureAccessOut(BaseModel):
+    """
+    A temporary read URL for a stored audit capture.
+
+    `captured_frame_path` and `intruder_image_path` store an object KEY rather
+    than a filesystem path, so they cannot be fetched directly: audit images
+    live in a private bucket and are only reachable through a signed URL.
+    """
+
+    record_id: uuid.UUID
+    kind: str = Field(..., description="'captured' or 'intruder'")
+    key: str
+    url: str
+    expires_in: int
+
+    model_config = {"from_attributes": True}
+
+
 # ── Real-time WebSocket Event Payloads ────────────────────────────────────────
 class WSAttendanceEvent(BaseModel):
     event: str = "attendance_update"

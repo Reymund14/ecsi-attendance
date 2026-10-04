@@ -3,8 +3,10 @@ Users Router — CRUD for user accounts (admin-managed + self-service)
 """
 
 import os
+import posixpath
 import uuid
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select, func
@@ -15,13 +17,11 @@ from database import get_db
 from middleware.rbac import get_current_user, require_faculty_or_above, require_super_admin
 from models.user import User, UserRole
 from schemas.user import UserCreate, UserOut, UserUpdate, UserPasswordChange
+from services import storage
 from utils.security import hash_password, verify_password
 from config import settings
 
 router = APIRouter()
-
-PHOTO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "profiles")
-os.makedirs(PHOTO_DIR, exist_ok=True)
 
 
 # ── List / Search Users (admin + faculty) ─────────────────────────────────────
@@ -57,6 +57,9 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @router.get("/{user_id}", response_model=UserOut, dependencies=[Depends(require_faculty_or_above)])
 async def get_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    user_id = str(user_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     result = await db.execute(
         select(User)
         .options(selectinload(User.rfid_card), selectinload(User.face_embedding))
@@ -99,6 +102,9 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    user_id = str(user_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     # Students may only update their own record; admin/faculty can update any
     if current_user.role == UserRole.STUDENT and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="Students may only update their own profile.")
@@ -141,28 +147,54 @@ async def upload_profile_photo(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    allowed = {"image/jpeg", "image/png", "image/webp"}
-    if photo.content_type not in allowed:
-        raise HTTPException(status_code=400, detail="Only JPEG/PNG/WEBP images are accepted.")
+    """
+    Accept a JPEG/PNG/WEBP avatar and store it in object storage.
 
-    filename = f"{current_user.id}.jpg"
-    filepath = os.path.join(PHOTO_DIR, filename)
+    Returns a directly loadable URL: `/static/profiles/<id><ext>` when running
+    against the local filesystem, or an absolute Supabase public URL in the cloud.
+    """
+    content = await photo.read()
 
-    with open(filepath, "wb") as f:
-        content = await photo.read()
-        f.write(content)
+    # The client's Content-Type is untrusted — an attacker could upload HTML and
+    # have it served from our own origin, so validate the real magic bytes and
+    # derive the extension from what we actually sniffed.
+    if storage.sniff_image(content) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported image. Only genuine JPEG, PNG or WEBP files are accepted.",
+        )
 
-    current_user.profile_photo_path = f"/static/profiles/{filename}"
+    try:
+        public_url = await storage.save_photo(current_user.id, content, photo.content_type or "")
+    except storage.StorageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Replace any previous photo so we do not leave orphans under another extension.
+    previous = current_user.profile_photo_path
+    current_user.profile_photo_path = public_url
     await db.flush()
     await db.refresh(current_user)
+
+    if previous and previous != public_url:
+        old_key = posixpath.basename(urlparse(str(previous)).path)
+        if old_key.startswith(f"{current_user.id}."):
+            await storage.delete_photo_key(old_key)
+
     return UserOut.from_orm_extended(current_user)
 
 
 # ── Delete user (super admin only) ───────────────────────────────────────────
 @router.delete("/{user_id}", status_code=204, dependencies=[Depends(require_super_admin)])
 async def delete_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    user_id = str(user_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
     await db.delete(user)
+
+    # Remove the stored avatar too, otherwise the object outlives the user and
+    # accumulates in the bucket (and in local dev on disk).
+    await storage.delete_photo(str(user_id))

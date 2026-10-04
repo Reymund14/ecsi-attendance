@@ -1,0 +1,40 @@
+# Keep the Docker build context small — without this, `COPY . .` would pull in
+# the local .venv (hundreds of MB) and the SQLite database.
+
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local config
+.env
+.env.local
+.env.*.local
+
+# Local data — never bake a dev database or captured media into an image
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# The real configured media dirs (settings.AUDIT_CAPTURE_DIR / PROFILE_PHOTO_DIR)
+audit_captures/
+static/
+
+# Ad-hoc verification scripts
+_tmp_*.py
+
+uploads/
+audio/
+photos/
+captures/
+
+*.log
+.vscode/
+.idea/
+.DS_Store

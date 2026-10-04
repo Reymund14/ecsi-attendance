@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ECSI Attendance System — Render (cloud) dependencies
+#
+# Deliberately EXCLUDES OpenCV / DeepFace / TensorFlow / ONNX (~1.5 GB).
+# Render cannot reach a physical camera or RFID reader, so the cloud service
+# never opens a capture device: all camera frames are produced in the browser
+# and POSTed in as base64 (see frontend/index.html -> processFrame).
+#
+# services/face_service.py imports cv2/numpy/DeepFace lazily and inside
+# try/except, so main.py still starts cleanly without them. Face *enrollment*
+# is the one endpoint that will return 503 in the cloud; everything else
+# (auth, RBAC, attendance, reports, WebSocket dashboard) works normally.
+#
+# Use this file for Render. Use requirements.txt for local/edge hardware work.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Web Framework ─────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1       # [standard] bundles `websockets`, required by /ws/dashboard
+python-multipart==0.0.9
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1                  # passlib 1.7.4 breaks on bcrypt >= 4.1
+pydantic==2.7.3
+pydantic-settings==2.3.1
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.30
+asyncpg==0.29.0
+aiosqlite==0.20.0              # only for local SQLite runs / `python seed.py`
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+
+# Storage: Supabase Storage's REST API (avoids the heavy `supabase` SDK).
+# Local/dev uploads do not use it, but importing storage.py requires it.
+httpx==0.27.0

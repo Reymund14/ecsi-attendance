@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ECSI Attendance System — repository-wide ignore rules
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Secrets & local environment ───────────────────────────────────────────────
+# Real credentials never belong in git. frontend/.env is the one exception:
+# it holds only localhost dev defaults (no secrets) so `npm run build` works
+# on a fresh clone, and Vercel env vars still take precedence over it.
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+!Projects/DERILO PROJECT/ECSI-Attendance-System/frontend/.env
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ── Node / Vite ───────────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+.vite/
+npm-debug.log*
+yarn-error.log*
+
+# ── Local database & runtime data ─────────────────────────────────────────────
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+# Ad-hoc verification scripts (kept on disk, never committed).
+backend/_tmp_*.py
+_tmp_*.py
+
+# The real configured media dirs (settings.AUDIT_CAPTURE_DIR and
+# PROFILE_PHOTO_DIR). They hold seeded placeholder JPEGs and uploaded avatars,
+# so they must not be committed even when running in local-storage mode.
+# NOTE: "**/" is required because a pattern containing a slash is anchored to
+# this file's directory, and the app is nested under "Projects/". Without it,
+# "static/profiles/" would only match at the repo root.
+**/audit_captures/
+**/static/profiles/
+
+# Superseded directory names, kept only to catch older checkouts.
+uploads/
+audio/
+photos/
+captures/
+audit/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Editor / OS ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Packaged archives (build output, not source) ──────────────────────────────
+*.rar
+*.zip

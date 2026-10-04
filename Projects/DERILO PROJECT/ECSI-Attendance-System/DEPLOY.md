@@ -1,4 +1,12 @@
-# ECSI Attendance System — Deployment Guide
+# ECSI Attendance System — Deployment Guide (on-prem / Docker)
+
+> **Superseded for cloud deployment.** These steps describe running everything
+> on one machine with Docker Compose plus a **Cloudflare Tunnel**, which requires
+> a physically connected webcam and RFID reader. For the Vercel + Render +
+> Supabase setup, see **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
+>
+> Keep this file for on-prem deployments where the camera/RFID hardware must
+> live next to the backend.
 
 ## Prerequisites
 

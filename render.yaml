@@ -1,0 +1,103 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Render blueprint — ECSI Attendance System API
+#
+# Deploy:  Render Dashboard -> New -> Blueprint -> point at this repo root.
+#         Render reads render.yaml and rootDir below, so every path is relative
+#         to the REPOSITORY root (not this file's directory).
+#
+# Secrets: the sync:false values below are placeholders — Render will prompt for
+#          each one on first deploy. Nothing sensitive lives in this file.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: ecsi-attendance-api
+    runtime: python
+    plan: free
+    region: singapore
+
+    # The API is nested inside the repo, one folder below "Projects".
+    rootDir: Projects/DERILO PROJECT/ECSI-Attendance-System/backend
+
+    # Slim deps: no OpenCV/DeepFace/TensorFlow (Render has no camera anyway).
+    buildCommand: pip install --upgrade pip && pip install -r requirements-render.txt
+
+    # ONE worker, always. websocket/manager.py keeps connected clients in
+    # process memory, so a second worker would strand dashboards on worker #1.
+    # Scale vertically ($PORT handles it) or migrate the WS manager to Redis.
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 65
+
+    healthCheckPath: /health
+
+    # Free instances sleep after 15 min idle and WSS connections drop with them.
+    # Set plan to `starter` to keep the live dashboard reliable.
+    autoDeploy: true
+    autoDeployTrigger: commit
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+
+      # Generate with:
+      #   python -c "import secrets; print(secrets.token_hex(32))"
+      - key: SECRET_KEY
+        sync: false
+
+      # Supabase -> Project Settings -> Database -> Connection string.
+      # Use the TRANSACTION pooler (port 5432), URI mode, and URL-encode the
+      # password. Append ?prepared_statement_cache_size=0
+      # -> postgresql+asyncpg://USER:PASSWORD@aws-0-<region>.pooler.supabase.com:5432/postgres
+      - key: DATABASE_URL
+        sync: false
+
+      # ── Object storage ──────────────────────────────────────────────────────
+      # Render's filesystem is ephemeral, so photos and audit captures live in
+      # Supabase Storage. Without these two the app refuses to start in
+      # production (config.py guard) rather than silently losing every upload.
+      # Supabase -> Project Settings -> API
+      - key: SUPABASE_URL
+        sync: false
+      # The service role bypasses RLS. Backend only — never expose to Vite/frontend.
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_BUCKET_PHOTOS
+        value: profile-photos
+      - key: SUPABASE_BUCKET_CAPTURES
+        value: audit-captures
+      - key: SIGNED_URL_TTL_SECONDS
+        value: "900"
+      # Idempotent bucket creation at boot; set false to provision buckets manually.
+      - key: STORAGE_AUTO_CREATE_BUCKETS
+        value: "true"
+
+      # Your Vercel frontend origin(s) — JSON array or comma-separated.
+      # e.g. ["https://ecsi-attendance.vercel.app"]
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+      # Lets Vercel preview deployments (random subdomains) call the API
+      # without listing each one.
+      - key: CORS_ORIGIN_REGEX
+        value: ^https://[a-z0-9-]+\.vercel\.app$
+
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "480"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "5"
+
+    # Only needed if you deliberately switch STORAGE_BACKEND to `local` on a paid
+    # plan with a persistent disk: profile photos and audit captures are then
+    # written to disk, are NOT shared across instances, and are lost when the
+    # disk is detached. Mount it, then point PROFILE_PHOTO_DIR and
+    # AUDIT_CAPTURE_DIR at /data/... in the Environment tab.
+    # disk:
+    #   name: ecsi-media
+    #   mountPath: /data
+    #   sizeGB: 1

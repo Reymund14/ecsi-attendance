@@ -142,6 +142,9 @@ async def analytics_overview(db: AsyncSession = Depends(get_db)):
 # ── Reset / Delete proxy log (super admin) ────────────────────────────────────
 @router.delete("/proxy-logs/{log_id}", status_code=204, dependencies=[Depends(require_super_admin)])
 async def delete_proxy_log(log_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    log_id = str(log_id)
+    # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
+    # once so comparisons and binds below both work.
     result = await db.execute(select(ProxyAuditLog).where(ProxyAuditLog.id == log_id))
     log = result.scalar_one_or_none()
     if not log:

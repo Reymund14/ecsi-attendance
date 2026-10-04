@@ -8,10 +8,10 @@ from typing import Optional
 
 import enum
 from sqlalchemy import DateTime, Enum, Float, ForeignKey, String, Text, func
-from sqlalchemy.types import String as SAString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
+from models.user import UUIDString
 
 
 # ── Enumerations ──────────────────────────────────────────────────────────────
@@ -31,11 +31,11 @@ class CheckType(str, enum.Enum):
 class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        SAString(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    id: Mapped[str] = mapped_column(
+        UUIDString(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        SAString(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    user_id: Mapped[str] = mapped_column(
+        UUIDString(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     card_uid_used: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[AttendanceStatus] = mapped_column(
@@ -50,8 +50,8 @@ class AttendanceRecord(Base):
     )
     cosine_distance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     terminal_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    override_by: Mapped[Optional[uuid.UUID]] = mapped_column(
-        SAString(36), ForeignKey("users.id"), nullable=True
+    override_by: Mapped[Optional[str]] = mapped_column(
+        UUIDString(36), ForeignKey("users.id"), nullable=True
     )
     override_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     captured_frame_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
@@ -74,19 +74,19 @@ class AttendanceRecord(Base):
 class ProxyAuditLog(Base):
     __tablename__ = "proxy_audit_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        SAString(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    id: Mapped[str] = mapped_column(
+        UUIDString(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    attendance_record_id: Mapped[uuid.UUID] = mapped_column(
-        SAString(36),
+    attendance_record_id: Mapped[str] = mapped_column(
+        UUIDString(36),
         ForeignKey("attendance_records.id", ondelete="CASCADE"),
         unique=True,
     )
     intruder_image_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     cosine_distance: Mapped[float] = mapped_column(Float, nullable=False)
     card_uid: Mapped[str] = mapped_column(String(64), nullable=False)
-    registered_user_id: Mapped[uuid.UUID] = mapped_column(
-        SAString(36), ForeignKey("users.id"), nullable=False
+    registered_user_id: Mapped[str] = mapped_column(
+        UUIDString(36), ForeignKey("users.id"), nullable=False
     )
     terminal_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     detected_at: Mapped[datetime] = mapped_column(

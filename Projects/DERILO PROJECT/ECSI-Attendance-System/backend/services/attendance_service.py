@@ -23,6 +23,7 @@ from database import AsyncSessionLocal
 from models.attendance import AttendanceRecord, AttendanceStatus, CheckType, ProxyAuditLog
 from models.user import RFIDCard, FaceEmbedding, User
 from schemas.attendance import WSAttendanceEvent, WSAlertEvent
+from services import storage
 from services.camera_service import camera_service
 from services.face_service import FaceService
 from websocket.manager import ws_manager
@@ -104,7 +105,7 @@ class AttendanceService:
             )
 
             # ── Step 4: Save captured frame ────────────────────────────────
-            captured_path = self._save_frame(
+            captured_path = await self._save_frame(
                 raw_frame=raw_frame,
                 user_id=str(user.id),
                 is_proxy=not is_match,
@@ -132,7 +133,7 @@ class AttendanceService:
                 )
 
                 # Save intruder crop to audit directory
-                intruder_path = self._save_intruder_crop(raw_frame, record.id)
+                intruder_path = await self._save_intruder_crop(raw_frame, record.id)
 
                 # Write proxy audit log
                 proxy_log = ProxyAuditLog(
@@ -170,33 +171,33 @@ class AttendanceService:
         await db.refresh(record)
         return record
 
-    def _save_frame(self, raw_frame: np.ndarray, user_id: str, is_proxy: bool) -> str | None:
+    async def _save_frame(self, raw_frame: np.ndarray, user_id: str, is_proxy: bool) -> str | None:
+        """Encode and persist a capture frame. Returns a storage KEY, not a path."""
         if raw_frame is None:
             return None
         try:
             subdir = "proxy" if is_proxy else "verified"
-            target_dir = os.path.join(settings.AUDIT_CAPTURE_DIR, subdir)
-            os.makedirs(target_dir, exist_ok=True)
             filename = f"{user_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-            path = os.path.join(target_dir, filename)
-            cv2.imwrite(path, raw_frame)
-            return path
+            ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            if not ok:
+                raise RuntimeError("cv2.imencode returned False")
+            return await storage.save_capture(subdir, filename, buf.tobytes(), "image/jpeg")
         except Exception as exc:
             logger.error("Failed to save frame: %s", exc)
             return None
 
-    def _save_intruder_crop(self, raw_frame: np.ndarray, record_id: uuid.UUID) -> str | None:
+    async def _save_intruder_crop(self, raw_frame: np.ndarray, record_id: uuid.UUID) -> str | None:
+        """Persist the cropped face of a flagged proxy attempt. Returns a KEY."""
         if raw_frame is None:
             return None
         try:
             crop = face_service.crop_face(raw_frame)
             target = crop if crop is not None else raw_frame
-            target_dir = os.path.join(settings.AUDIT_CAPTURE_DIR, "intruders")
-            os.makedirs(target_dir, exist_ok=True)
             filename = f"intruder_{record_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-            path = os.path.join(target_dir, filename)
-            cv2.imwrite(path, target)
-            return path
+            ok, buf = cv2.imencode(".jpg", target, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            if not ok:
+                raise RuntimeError("cv2.imencode returned False")
+            return await storage.save_capture("intruders", filename, buf.tobytes(), "image/jpeg")
         except Exception as exc:
             logger.error("Failed to save intruder crop: %s", exc)
             return None

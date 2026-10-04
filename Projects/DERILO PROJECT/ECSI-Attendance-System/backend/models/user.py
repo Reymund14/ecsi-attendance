@@ -10,7 +10,7 @@ from typing import List, Optional
 
 import enum
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, func
-from sqlalchemy.types import String as SAString, TypeDecorator
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -26,6 +26,29 @@ class FloatListJSON(TypeDecorator):
 
     def process_result_value(self, value, dialect):
         return _json.loads(value) if value is not None else None
+
+
+# ── UUID stored as a 36-char string ───────────────────────────────────────────
+class UUIDString(TypeDecorator):
+    """
+    `VARCHAR(36)` that also accepts a `uuid.UUID` when bound.
+
+    IDs are stored as strings so the schema works identically on SQLite and
+    PostgreSQL, but FastAPI hands routers a real `uuid.UUID` for path params.
+    Without this coercion aiosqlite raises "type 'UUID' is not supported" and
+    asyncpg would raise a type error, turning every ID lookup into a 500.
+    """
+
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        return value
 
 
 # ── Enumerations ──────────────────────────────────────────────────────────────
@@ -46,7 +69,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(
-        SAString(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        UUIDString(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     id_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
     full_name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -90,10 +113,10 @@ class RFIDCard(Base):
     __tablename__ = "rfid_cards"
 
     id: Mapped[str] = mapped_column(
-        SAString(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        UUIDString(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(
-        SAString(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True
+        UUIDString(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True
     )
     card_uid: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -109,10 +132,10 @@ class FaceEmbedding(Base):
     __tablename__ = "face_embeddings"
 
     id: Mapped[str] = mapped_column(
-        SAString(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        UUIDString(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(
-        SAString(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True
+        UUIDString(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True
     )
     embedding_vector: Mapped[List[float]] = mapped_column(FloatListJSON, nullable=False)
     model_name: Mapped[str] = mapped_column(String(64), nullable=False, default="ArcFace")
