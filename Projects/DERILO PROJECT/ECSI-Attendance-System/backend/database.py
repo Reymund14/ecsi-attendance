@@ -20,6 +20,9 @@ if not _is_sqlite:
         max_overflow=settings.DB_MAX_OVERFLOW,
         pool_timeout=settings.DB_POOL_TIMEOUT,
         pool_pre_ping=True,
+        connect_args={
+            "statement_cache_size": 0,
+        },
     )
 else:
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
