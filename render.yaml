@@ -31,7 +31,7 @@ services:
 
     # Free instances sleep after 15 min idle and WSS connections drop with them.
     # Set plan to `starter` to keep the live dashboard reliable.
-    autoDeploy: true
+
     autoDeployTrigger: commit
 
     envVars:
