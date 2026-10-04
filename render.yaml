@@ -20,7 +20,7 @@ services:
     rootDir: Projects/DERILO PROJECT/ECSI-Attendance-System/backend
 
     # Slim deps: no OpenCV/DeepFace/TensorFlow (Render has no camera anyway).
-    buildCommand: pip install --upgrade pip && pip install -r requirements-render.txt
+    buildCommand: pip install -r requirements-render.txt
 
     # ONE worker, always. websocket/manager.py keeps connected clients in
     # process memory, so a second worker would strand dashboards on worker #1.
