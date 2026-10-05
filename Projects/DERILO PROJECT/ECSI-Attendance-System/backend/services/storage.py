@@ -53,7 +53,7 @@ _BUCKET_SPECS = {
     CAPTURES_BUCKET: {
         "id_attr": "SUPABASE_BUCKET_CAPTURES",
         "public": False,
-        "allowed_types": {"image/jpeg", "image/png", "image/webp"},
+        "allowed_types": {"image/jpeg", "image/png", "image/webp", "application/pdf"},
         "max_bytes": 8 * 1024 * 1024,
     },
 }
@@ -180,6 +180,12 @@ class SupabaseStorage:
                 body = resp.text.lower()
                 if "already" in body or "exists" in body:
                     logger.debug("Storage bucket %s already exists", bucket_id)
+                    updated = await self._client.put(f"/storage/v1/bucket/{bucket_id}", json=payload)
+                    if updated.status_code != 200:
+                        logger.warning(
+                            "Could not update bucket %s (HTTP %s): %s",
+                            bucket_id, updated.status_code, updated.text[:200],
+                        )
                 else:
                     logger.warning(
                         "Could not create bucket %s (HTTP %s): %s",
@@ -443,6 +449,22 @@ async def delete_face_enrollment_photo(user_id: str) -> bool:
         except StorageError:
             continue
     return removed
+
+
+async def save_excuse_proof(student_id: str, request_id: str, filename: str, data: bytes, content_type: str) -> str:
+    """Save a private proof attachment and return its object key."""
+    safe_name = posixpath.basename(filename.replace("\\", "/"))[:180] or "proof"
+    return await save_capture(
+        "excuses", f"{student_id}/{request_id}-{safe_name}", data, content_type
+    )
+
+
+async def delete_capture(key: str) -> bool:
+    """Delete a private capture object by key."""
+    try:
+        return await get_storage().delete(CAPTURES_BUCKET, key)
+    except StorageError:
+        return False
 
 
 async def capture_signed_url(key: str) -> Optional[str]:

@@ -67,11 +67,17 @@ The first frame from face enrollment is also saved privately at
 response includes a short-lived signed URL for the enrolling user; deleting
 the face template removes this reference image too.
 
-Uploads are validated by **magic bytes**, not the browser-supplied
+Avatar uploads are validated by **magic bytes**, not the browser-supplied
 `Content-Type`, so an attacker cannot smuggle HTML/SVG into a bucket served
-from your own origin. Accepted: JPEG, PNG, WEBP. The extension is derived from
-what was actually sniffed. Keys are validated to block path traversal, and
-buckets enforce size limits and an allow-list of MIME types.
+from your own origin. Accepted images: JPEG, PNG, WEBP. Excuse proofs accept
+those image types plus PDF, with a 5 MB API limit, in the private bucket.
+Keys are validated to block path traversal, and buckets enforce size limits
+and an allow-list of MIME types.
+
+Student excuse requests are stored in the `excuse_requests` database table;
+proof files go to the private `audit-captures` bucket. Students can list their
+own requests, and faculty can list and review requests in their assigned
+section. A new backend deployment creates the table automatically.
 
 ---
 

@@ -364,13 +364,16 @@ let feedItems = [];
 let backendUsers = [];
 let backendAttendance = [];
 let backendNotifications = [];
-function appUsers(){return demoMode?MOCK.users:backendUsers;}
+let backendExcuses = [];
+function appUsers(){return demoMode?MOCK.users:[...backendUsers.filter(u=>u.id!==currentUser?.id),...(currentUser?[currentUser]:[])];}
 function appAttendance(){return demoMode?MOCK.attendance:backendAttendance;}
 function appSections(){return demoMode?Object.keys(MOCK.sections):[...new Set(appUsers().map(u=>u.section).filter(Boolean))].sort();}
 function appAdviserFor(section){return appUsers().find(u=>u.role==='faculty'&&u.section===section)?.full_name||'';}
 function appSectionInfo(section){const sample=demoMode?MOCK.sections[section]:null;const student=appUsers().find(u=>u.role==='student'&&u.section===section);return sample||{department:student?.department||'',adviser:appAdviserFor(section)};}
 function appSectionsMap(){return Object.fromEntries(appSections().map(section=>[section,appSectionInfo(section)]));}
 function appNotifications(){return demoMode?MOCK.notifLog:backendNotifications.map(n=>({...n,type:n.channel,recipient:n.recipient_label,recipient_id:n.recipient_user_id,recipient_role:n.recipient_role,sender:n.sender_name,sent_at:n.created_at}));}
+function appExcuseRequests(){return demoMode?MOCK.excuseRequests:backendExcuses;}
+function normalizeExcuseRequest(r){return {...r,proof_data:r.proof_url||null};}
 
 function saveAuth(d){ try{localStorage.setItem('ecsi_auth',JSON.stringify(d));}catch{} }
 function loadAuth(){ try{return JSON.parse(localStorage.getItem('ecsi_auth')||'null');}catch{return null;} }
@@ -378,7 +381,8 @@ function clearAuthStore(){ try{localStorage.removeItem('ecsi_auth');}catch{} }
 
 async function apiFetch(path, opts={}){
   if(demoMode) return null;
-  const headers={'Content-Type':'application/json'};
+  const headers={};
+  if(!(opts.body instanceof FormData)) headers['Content-Type']='application/json';
   if(currentUser?.token) headers['Authorization']='Bearer '+currentUser.token;
   Object.assign(headers, opts.headers||{});
   try{
@@ -479,10 +483,11 @@ const NAV={
 };
 
 async function refreshBackendData(){
-  const [users,attendance,notifications]=await Promise.all([apiFetchAll('/users/',100),apiFetchAll('/attendance',200),apiFetch('/notifications/')]);
+  const [users,attendance,notifications,excuses]=await Promise.all([apiFetchAll('/users/',100),apiFetchAll('/attendance',200),apiFetch('/notifications/'),apiFetch('/excuses/')]);
   if(users) backendUsers=users;
   if(attendance){backendAttendance=attendance;feedItems=attendance.slice(0,100).map(row=>({...row,record_id:row.id||row.record_id,event:'attendance_update'}));}
   if(notifications?.ok) backendNotifications=await notifications.json();
+  if(excuses?.ok) backendExcuses=(await excuses.json()).map(normalizeExcuseRequest);
   refreshFeed();refreshMonFeed();
   buildNav();
   if(currentPage) navigate(currentPage);
@@ -3298,7 +3303,7 @@ function renderStudentProfile(el){
           </div>
           <div>
             <label style="font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:5px">Contact Number</label>
-            <input id="prof-contact" type="text" value="${me.parent_contact||me.contact||''}" placeholder="e.g. 09171234567" style="width:100%;padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;box-sizing:border-box"/>
+            <input id="prof-contact" type="text" value="${me.phone||me.contact||''}" placeholder="e.g. 09171234567" style="width:100%;padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;box-sizing:border-box"/>
           </div>
           <div>
             <label style="font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:5px">Parent / Guardian Name</label>
@@ -3313,7 +3318,7 @@ function renderStudentProfile(el){
     </div>`;
 }
 
-function saveStudentProfile(){
+async function saveStudentProfile(){
   const me=appUsers().find(u=>u.id===currentUser.id);
   if(!me){setProfileAlert('error','User not found.');return;}
   const name=document.getElementById('prof-name')?.value.trim();
@@ -3322,10 +3327,15 @@ function saveStudentProfile(){
   const parent=document.getElementById('prof-parent')?.value.trim();
   if(!name){setProfileAlert('error','Full name cannot be empty.');return;}
   if(contact&&!/^(09|\+639)\d{9}$/.test(contact.replace(/\s/g,''))){setProfileAlert('error','Enter a valid PH mobile number (e.g. 09171234567).');return;}
-  me.full_name=name;
-  if(address) me.address=address;
-  if(contact) me.parent_contact=contact;
-  if(parent) me.parent_name=parent;
+  if(demoMode){
+    me.full_name=name;me.address=address;me.phone=contact;me.parent_name=parent;
+  }else{
+    const r=await apiFetch(`/users/${encodeURIComponent(me.id)}`,{method:'PATCH',body:JSON.stringify({full_name:name,address,phone:contact,parent_name:parent})});
+    const d=r?await r.json():{};
+    if(!r?.ok){setProfileAlert('error',d.detail||'Could not save profile changes.');return;}
+    Object.assign(currentUser,d,{token:currentUser.token});
+    backendUsers=backendUsers.map(u=>u.id===d.id?d:u);
+  }
   currentUser.full_name=name;
   document.getElementById('sb-name').textContent=name;
   setProfileAlert('success','Profile updated successfully.');
@@ -3344,7 +3354,7 @@ function renderStudentExcuse(el){
   const me=appUsers().find(u=>u.id===currentUser.id)||currentUser;
   const sec=me.section||'—';
   const adviser=appSectionInfo(sec)?.adviser||'—';
-  const myRequests=MOCK.excuseRequests.filter(r=>r.student_id===me.id);
+  const myRequests=appExcuseRequests().filter(r=>r.student_id===me.id);
   const today=new Date().toISOString().split('T')[0];
 
   const statusBadge=(s)=>({
@@ -3453,7 +3463,7 @@ function toggleExcuseOther(){
 }
 
 // ── Excuse proof upload helpers ──────────────────────────────
-let _excProofData=null,_excProofName=null,_excProofType=null;
+let _excProofData=null,_excProofName=null,_excProofType=null,_excProofFile=null;
 
 function excHandleDrop(e){
   const f=e.dataTransfer?.files?.[0];
@@ -3469,6 +3479,7 @@ function excHandleFile(f){
     _excProofData=e.target.result;
     _excProofName=f.name;
     _excProofType=f.type;
+    _excProofFile=f;
     // Update preview
     const prev=document.getElementById('exc-proof-preview');
     const icon=document.getElementById('exc-proof-icon');
@@ -3489,7 +3500,7 @@ function excHandleFile(f){
   reader.readAsDataURL(f);
 }
 function excClearProof(){
-  _excProofData=null;_excProofName=null;_excProofType=null;
+  _excProofData=null;_excProofName=null;_excProofType=null;_excProofFile=null;
   const prev=document.getElementById('exc-proof-preview');
   const dz=document.getElementById('exc-drop-zone');
   const inp=document.getElementById('exc-proof-input');
@@ -3502,20 +3513,21 @@ function excClearProof(){
 
 // Lightbox viewer for image proofs
 function excViewProof(reqId){
-  const req=MOCK.excuseRequests.find(r=>r.id===reqId);
-  if(!req?.proof_data) return;
+  const req=appExcuseRequests().find(r=>r.id===reqId);
+  const proofUrl=req?.proof_data||req?.proof_url;
+  if(!proofUrl) return;
   let lb=document.getElementById('exc-lightbox');
   if(!lb){lb=document.createElement('div');lb.id='exc-lightbox';document.body.appendChild(lb);}
   lb.style.cssText='position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out';
   lb.innerHTML=`<div style="position:relative;max-width:90vw;max-height:90vh">
-    <img src="${req.proof_data}" style="max-width:100%;max-height:90vh;border-radius:10px;display:block"/>
+    <img src="${proofUrl}" style="max-width:100%;max-height:90vh;border-radius:10px;display:block"/>
     <div style="position:absolute;top:-14px;right:-14px;background:#EF4444;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.4)" onclick="document.getElementById('exc-lightbox').style.display='none'">✕</div>
     <div style="text-align:center;color:#9CA3AF;font-size:11px;margin-top:8px">${req.proof_name||''} · ${req.student_name}</div>
   </div>`;
   lb.onclick=e=>{if(e.target===lb)lb.style.display='none';};
 }
 
-function submitExcuseRequest(){
+async function submitExcuseRequest(){
   const me=appUsers().find(u=>u.id===currentUser.id)||currentUser;
   const date=document.getElementById('exc-date')?.value;
   const reasonType=document.getElementById('exc-reason-type')?.value;
@@ -3538,14 +3550,26 @@ function submitExcuseRequest(){
     proof_name:_excProofName||null,
     proof_type:_excProofType||null,
   };
-  MOCK.excuseRequests.unshift(req);
+  const hadProof=!!_excProofFile;
+  if(demoMode){
+    MOCK.excuseRequests.unshift(req);
+  }else{
+    const form=new FormData();
+    form.append('absence_date',date);
+    form.append('reason',reason);
+    if(_excProofFile) form.append('proof',_excProofFile,_excProofName||_excProofFile.name);
+    const response=await apiFetch('/excuses/',{method:'POST',body:form});
+    const result=response?await response.json():{};
+    if(!response?.ok){setExcuseAlert('error',result.detail||'Could not submit your excuse request.');return;}
+    backendExcuses.unshift(normalizeExcuseRequest(result));
+  }
   // Reset form
   if(document.getElementById('exc-date')) document.getElementById('exc-date').value=new Date().toISOString().split('T')[0];
   if(document.getElementById('exc-reason-type')) document.getElementById('exc-reason-type').value='';
   if(document.getElementById('exc-details')) document.getElementById('exc-details').value='';
   excClearProof();
-  setExcuseAlert('success',_excProofData?'Request with proof submitted to your adviser.':'Request submitted. You can also attach a proof document for faster approval.');
-  _excProofData=null;_excProofName=null;_excProofType=null;
+  setExcuseAlert('success',hadProof?'Request with proof submitted to your adviser.':'Request submitted. You can also attach a proof document for faster approval.');
+  _excProofData=null;_excProofName=null;_excProofType=null;_excProofFile=null;
   // Re-render the list
   setTimeout(()=>renderStudentExcuse(document.getElementById('page-student-excuse')),1200);
 }
@@ -3582,7 +3606,7 @@ function renderNotifications(el){
               <div style="font-weight:700">📝 Excuse Requests</div>
               <div style="font-size:12px;color:#6B7280">From students in your advisory class</div>
             </div>
-            <span style="font-size:11px;font-weight:700;padding:3px 10px;background:#FEF3C7;color:#92400E;border-radius:99px" id="excuse-pending-badge">${MOCK.excuseRequests.filter(r=>r.status==='pending').length} pending</span>
+            <span style="font-size:11px;font-weight:700;padding:3px 10px;background:#FEF3C7;color:#92400E;border-radius:99px" id="excuse-pending-badge">${appExcuseRequests().filter(r=>r.status==='pending').length} pending</span>
           </div>
           <div id="excuse-review-list">${renderExcuseReviewList()}</div>
         </div>`:''}
@@ -3838,7 +3862,7 @@ function renderDashExcuse(){
   const badge=document.getElementById('dash-excuse-badge');
   if(!list) return;
   const advisorySections=getFacultyAdvisorySections(currentUser);
-  const reqs=MOCK.excuseRequests.filter(r=>advisorySections.includes(r.section));
+  const reqs=appExcuseRequests().filter(r=>advisorySections.includes(r.section));
   const pending=reqs.filter(r=>r.status==='pending').length;
   if(badge){badge.textContent=pending+' pending';badge.style.background=pending?'#FEF3C7':'#F3F4F6';badge.style.color=pending?'#92400E':'#6B7280';}
 
@@ -3888,7 +3912,7 @@ function renderDashExcuse(){
 
 // ── Excuse review modal (approve / reject with custom note) ──
 function openExcuseModal(reqId, action){
-  const req=MOCK.excuseRequests.find(r=>r.id===reqId);
+  const req=appExcuseRequests().find(r=>r.id===reqId);
   if(!req) return;
   const modal=document.getElementById('excuse-review-modal');
   const title=document.getElementById('exc-modal-title');
@@ -4003,8 +4027,8 @@ function closeExcuseModal(){
   if(m) m.style.display='none';
 }
 
-function confirmExcuseReview(reqId, action){
-  const req=MOCK.excuseRequests.find(r=>r.id===reqId);
+async function confirmExcuseReview(reqId, action){
+  const req=appExcuseRequests().find(r=>r.id===reqId);
   if(!req) return;
   const note=(document.getElementById('exc-adviser-note')?.value||'').trim();
   if(action==='rejected'&&!note){
@@ -4014,16 +4038,24 @@ function confirmExcuseReview(reqId, action){
     if(errEl) errEl.style.display='block';
     return;
   }
-  req.status=action;
-  req.adviser_note=note||(action==='approved'?'Approved by adviser.':'Not approved by adviser.');
-  req.reviewed_at=new Date().toISOString();
+  const adviserNote=note||(action==='approved'?'Approved by adviser.':'Not approved by adviser.');
+  if(demoMode){
+    req.status=action;req.adviser_note=adviserNote;req.reviewed_at=new Date().toISOString();
+  }else{
+    const response=await apiFetch(`/excuses/${encodeURIComponent(reqId)}`,{method:'PATCH',body:JSON.stringify({status:action,adviser_note:adviserNote})});
+    const result=response?await response.json():{};
+    if(!response?.ok){setExcuseAlert('error',result.detail||'Could not review this excuse request.');return;}
+    const updated=normalizeExcuseRequest(result);
+    backendExcuses=backendExcuses.map(item=>item.id===reqId?updated:item);
+    Object.assign(req,updated);
+  }
   closeExcuseModal();
   // Refresh wherever visible
   renderDashExcuse();
   const reviewList=document.getElementById('excuse-review-list');
   if(reviewList) reviewList.innerHTML=renderExcuseReviewList();
   const badge=document.getElementById('excuse-pending-badge');
-  if(badge) badge.textContent=MOCK.excuseRequests.filter(r=>r.status==='pending').length+' pending';
+  if(badge) badge.textContent=appExcuseRequests().filter(r=>r.status==='pending').length+' pending';
   _updateNotifNavBadge();
   // Toast
   const toast=document.createElement('div');
@@ -4066,7 +4098,7 @@ function _updateNotifNavBadge(){
 
 function renderExcuseReviewList(){
   const advisorySections=getFacultyAdvisorySections(currentUser);
-  const reqs=MOCK.excuseRequests.filter(r=>advisorySections.includes(r.section));
+  const reqs=appExcuseRequests().filter(r=>advisorySections.includes(r.section));
   if(!reqs.length) return `<div style="padding:28px;text-align:center;color:#9CA3AF;font-size:13px">No excuse requests from your advisory class.</div>`;
   const statusBadge=s=>({
     pending:`<span style="background:#FEF3C7;color:#92400E;font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px">⏳ Pending</span>`,
@@ -5016,7 +5048,7 @@ function _evalComputeRate(student){
   const daysPresent = new Set(timeIns.map(r => r.timestamp?.slice(0,10))).size;
   const verified = recs.filter(r => r.status==='verified' || r.status==='manual_override').length;
   const proxy = recs.filter(r => r.status==='proxy_anomaly').length;
-  const excused = MOCK.excuseRequests.filter(e => e.student_id===student.id && e.status==='approved').length;
+  const excused = appExcuseRequests().filter(e => e.student_id===student.id && e.status==='approved').length;
   const rate = Math.min(100, Math.round((daysPresent / totalDays) * 100));
   return {daysPresent, totalDays, verified, proxy, excused, rate};
 }

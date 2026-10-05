@@ -20,7 +20,7 @@ from utils.security import decode_token
 from websocket.manager import ws_manager
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-from routers import auth, users, enrollment, attendance, admin, notifications
+from routers import auth, users, enrollment, attendance, admin, notifications, excuses
 from services import storage
 from services.face_service import face_pipeline_available
 
@@ -133,6 +133,7 @@ app.include_router(enrollment.router, prefix=f"{API_PREFIX}/enrollment", tags=["
 app.include_router(attendance.router, prefix=f"{API_PREFIX}/attendance", tags=["Attendance"])
 app.include_router(admin.router,      prefix=f"{API_PREFIX}/admin",      tags=["Admin"])
 app.include_router(notifications.router, prefix=f"{API_PREFIX}/notifications", tags=["Notifications"])
+app.include_router(excuses.router, prefix=f"{API_PREFIX}/excuses", tags=["Excuses"])
 
 
 # ── WebSocket Endpoint ────────────────────────────────────────────────────────

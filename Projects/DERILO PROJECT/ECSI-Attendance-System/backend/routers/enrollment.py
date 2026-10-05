@@ -133,9 +133,9 @@ async def enroll_face(
         raise HTTPException(
             status_code=503,
             detail=(
-                "Face enrollment is unavailable: the biometric pipeline (OpenCV/DeepFace) "
-                "is not installed on this server. Run it on an edge host with a camera, "
-                "or install requirements.txt."
+                "Face enrollment is unavailable because OpenCV/DeepFace could not be loaded. "
+                "Check /health/ready for face_pipeline_available, then verify Render is "
+                "using Python 3.11 and installing backend/requirements-render.txt."
             ),
         )
 
