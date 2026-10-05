@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<meta name="ecsi-api-base" content="http://127.0.0.1:8001/api/v1"/>
+<meta name="ecsi-api-base" content="%VITE_API_BASE_URL%"/>
+<meta name="ecsi-ws-url" content="%VITE_WS_URL%"/>
 <title>ECSI Attendance System</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -350,9 +351,11 @@ const MOCK = {
 // ═══════════════════════════════════════════════════════════
 // Deployment endpoints — overridden at build time via VITE_API_BASE_URL / VITE_WS_URL.
 // Defaults in frontend/.env point at a local backend on port 8000.
-const API = (localStorage.getItem('ecsi_api_base') || document.querySelector('meta[name="ecsi-api-base"]')?.content || `${location.origin}/api/v1`).replace(/\/$/, '');
+const configuredApi = document.querySelector('meta[name="ecsi-api-base"]')?.content || '';
+const API = (localStorage.getItem('ecsi_api_base') || (configuredApi && !configuredApi.startsWith('%VITE_') ? configuredApi : `${location.origin}/api/v1`)).replace(/\/$/, '');
 const API_ORIGIN = new URL(API, location.href).origin;
-const WS_API = `${API_ORIGIN.replace(/^http/i, 'ws')}/ws/dashboard`;
+const configuredWs = document.querySelector('meta[name="ecsi-ws-url"]')?.content || '';
+const WS_API = localStorage.getItem('ecsi_ws_url') || (configuredWs && !configuredWs.startsWith('%VITE_') ? configuredWs : `${API_ORIGIN.replace(/^http/i, 'ws')}/ws/dashboard`);
 let currentUser = null;
 let demoMode = false;
 let currentPage = null;
