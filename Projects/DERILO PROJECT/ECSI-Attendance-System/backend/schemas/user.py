@@ -94,6 +94,7 @@ class FaceEmbeddingOut(BaseModel):
     source_frame_count: int
     created_at: datetime
     updated_at: datetime
+    face_photo_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

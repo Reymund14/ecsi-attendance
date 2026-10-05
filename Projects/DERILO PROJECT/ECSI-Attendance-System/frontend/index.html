@@ -4947,7 +4947,8 @@ async function enrolFaceConfirmed(){
       return;
     }
     enrolState.selected.has_face=true;
-    backendUsers=backendUsers.map(u=>u.id===enrolState.selected.id?{...u,has_face:true}:u);
+    if(d.face_photo_url) enrolState.selected.face_photo=d.face_photo_url;
+    backendUsers=backendUsers.map(u=>u.id===enrolState.selected.id?{...u,has_face:true,face_photo:d.face_photo_url||u.face_photo}:u);
     setEnrolAlert('success','Face enrolled successfully!');
     setTimeout(()=>enrolNext('done'),700);
   }catch{

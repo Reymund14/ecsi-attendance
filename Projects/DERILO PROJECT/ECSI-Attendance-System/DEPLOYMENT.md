@@ -62,6 +62,11 @@ Browser ──HTTPS──> Vercel (static page)
 | How the client reads it | `<img src="…">` directly | `GET /api/v1/attendance/{record_id}/capture` (or `/intruder`) → short-lived signed URL |
 | Who may read it | anyone with the URL | super admins only, URL expires after `SIGNED_URL_TTL_SECONDS` |
 
+The first frame from face enrollment is also saved privately at
+`audit-captures/enrollments/<user-id>.<image-extension>`. The enrollment
+response includes a short-lived signed URL for the enrolling user; deleting
+the face template removes this reference image too.
+
 Uploads are validated by **magic bytes**, not the browser-supplied
 `Content-Type`, so an attacker cannot smuggle HTML/SVG into a bucket served
 from your own origin. Accepted: JPEG, PNG, WEBP. The extension is derived from

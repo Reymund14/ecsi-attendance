@@ -29,9 +29,8 @@ async def delete_face(
     """
     Remove a user's face template.
 
-    Only the biometric embedding is deleted. The profile photo in the photos
-    bucket is a separate, user-managed asset, so it is deliberately left in
-    place.
+    Delete the biometric embedding and its private reference image. The
+    profile photo in the public photos bucket is a separate user-managed asset.
     """
     # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
     # once so comparisons and binds below both work.
@@ -48,6 +47,7 @@ async def delete_face(
         raise HTTPException(status_code=404, detail="No face template found for this user.")
 
     await db.delete(embedding)
+    await storage.delete_face_enrollment_photo(user_id)
     return Response(status_code=204)
 
 
@@ -127,9 +127,8 @@ async def enroll_face(
     if current_user.role == UserRole.STUDENT and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="Students may only enroll their own face.")
 
-    # The cloud deployment ships without OpenCV/DeepFace (see
-    # requirements-render.txt). Fail with 503 + a clear cause instead of a
-    # misleading 422 "no valid faces detected".
+    # Fail clearly if the biometric dependencies are unavailable instead of
+    # returning a misleading "no valid faces detected" response.
     if not face_pipeline_available():
         raise HTTPException(
             status_code=503,
@@ -167,6 +166,13 @@ async def enroll_face(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    # Keep one reference frame in the private Supabase bucket. Raw face imagery
+    # never goes in the public profile-photo bucket.
+    try:
+        await storage.save_face_enrollment_photo(user_id, frame_bytes_list[0])
+    except storage.StorageError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not save enrollment photo: {exc}")
+
     # Persist or update embedding
     existing = await db.execute(select(FaceEmbedding).where(FaceEmbedding.user_id == user_id))
     embedding = existing.scalar_one_or_none()
@@ -186,7 +192,9 @@ async def enroll_face(
 
     await db.flush()
     await db.refresh(embedding)
-    return embedding
+    output = FaceEmbeddingOut.model_validate(embedding)
+    output.face_photo_url = await storage.face_enrollment_photo_url(user_id)
+    return output
 
 
 # ── Face Enrollment Status ────────────────────────────────────────────────────
@@ -203,12 +211,17 @@ async def enrollment_status(user_id: uuid.UUID, db: AsyncSession = Depends(get_d
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
+    photo_url = (
+        await storage.face_enrollment_photo_url(user_id)
+        if user.face_embedding is not None else None
+    )
     return {
         "user_id": str(user.id),
         "full_name": user.full_name,
         "has_rfid": user.rfid_card is not None and user.rfid_card.is_active,
         "rfid_uid": user.rfid_card.card_uid if user.rfid_card is not None and user.rfid_card.is_active else None,
         "has_face_embedding": user.face_embedding is not None,
+        "face_photo_url": photo_url,
         "enrollment_complete": (
             user.rfid_card is not None
             and user.rfid_card.is_active

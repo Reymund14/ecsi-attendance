@@ -416,6 +416,35 @@ async def save_capture(subdir: str, filename: str, data: bytes, content_type: st
     return await backend.save(CAPTURES_BUCKET, key, data, content_type)
 
 
+async def save_face_enrollment_photo(user_id: str, data: bytes) -> str:
+    """Store one enrollment reference image in the private captures bucket."""
+    sniffed = sniff_image(data)
+    if sniffed is None:
+        raise StorageError("Unsupported or invalid face enrollment image.")
+    content_type, ext = sniffed
+    return await save_capture("enrollments", f"{user_id}{ext}", data, content_type)
+
+
+async def face_enrollment_photo_url(user_id: str) -> Optional[str]:
+    """Mint a short-lived URL for a user's private enrollment image."""
+    for ext in (".jpg", ".png", ".webp"):
+        url = await capture_signed_url(f"enrollments/{user_id}{ext}")
+        if url:
+            return url
+    return None
+
+
+async def delete_face_enrollment_photo(user_id: str) -> bool:
+    """Delete the private enrollment image for a user."""
+    removed = False
+    for ext in (".jpg", ".png", ".webp"):
+        try:
+            removed = await get_storage().delete(CAPTURES_BUCKET, f"enrollments/{user_id}{ext}") or removed
+        except StorageError:
+            continue
+    return removed
+
+
 async def capture_signed_url(key: str) -> Optional[str]:
     """Mint a short-lived URL for a stored audit capture key."""
     if not key:
