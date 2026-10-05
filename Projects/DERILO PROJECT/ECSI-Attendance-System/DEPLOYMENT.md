@@ -204,7 +204,7 @@ If you would rather use the Dashboard: **New → Web Service**, then set
 | Field | Value |
 |---|---|
 | Root Directory | `Projects/DERILO PROJECT/ECSI-Attendance-System/backend` |
-| Runtime | Python 3.11 |
+| Runtime | Python 3.11 (pinned by `backend/.python-version`) |
 | Build Command | `pip install --upgrade pip && pip install -r requirements-render.txt` |
 | Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1` |
 | Health Check Path | `/health` |
