@@ -53,6 +53,15 @@ async def list_attendance(
     # Students see only their own records
     if current_user.role == UserRole.STUDENT:
         stmt = stmt.where(AttendanceRecord.user_id == current_user.id)
+    elif current_user.role == UserRole.FACULTY:
+        # A faculty member only sees students assigned to their advisory section.
+        if current_user.section:
+            stmt = stmt.join(AttendanceRecord.user).where(
+                User.role == UserRole.STUDENT,
+                User.section == current_user.section,
+            )
+        else:
+            stmt = stmt.where(AttendanceRecord.user_id == "")
     elif user_id:
         stmt = stmt.where(AttendanceRecord.user_id == user_id)
 

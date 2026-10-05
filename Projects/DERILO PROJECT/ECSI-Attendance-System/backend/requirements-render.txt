@@ -1,17 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ECSI Attendance System — Render (cloud) dependencies
 #
-# Deliberately EXCLUDES OpenCV / DeepFace / TensorFlow / ONNX (~1.5 GB).
-# Render cannot reach a physical camera or RFID reader, so the cloud service
-# never opens a capture device: all camera frames are produced in the browser
-# and POSTed in as base64 (see frontend/index.html -> processFrame).
-#
-# services/face_service.py imports cv2/numpy/DeepFace lazily and inside
-# try/except, so main.py still starts cleanly without them. Face *enrollment*
-# is the one endpoint that will return 503 in the cloud; everything else
-# (auth, RBAC, attendance, reports, WebSocket dashboard) works normally.
-#
-# Use this file for Render. Use requirements.txt for local/edge hardware work.
+# Render dependencies, including the CPU face enrollment pipeline.
+# Camera frames are captured in the browser and POSTed as base64; the Render
+# service does not need access to a physical camera or RFID reader.
+# DeepFace/TensorFlow and its model weights are large, so builds and the first
+# face-enrollment request take longer and need adequate Render resources.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Web Framework ─────────────────────────────────────────────────────────────
@@ -38,3 +32,11 @@ python-dotenv==1.0.1
 # Storage: Supabase Storage's REST API (avoids the heavy `supabase` SDK).
 # Local/dev uploads do not use it, but importing storage.py requires it.
 httpx==0.27.0
+
+# AI / Computer Vision (CPU inference)
+deepface==0.0.93
+opencv-python-headless==4.10.0.82
+numpy==1.26.4
+onnxruntime==1.18.0
+mtcnn==0.1.1
+retina-face==0.0.17

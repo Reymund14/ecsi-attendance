@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta http-equiv="refresh" content="0;url=/Projects/DERILO%20PROJECT/ECSI-Attendance-System/frontend/index.html"/>
+<meta name="ecsi-api-base" content="http://127.0.0.1:8001/api/v1"/>
 <title>ECSI Attendance System</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -360,12 +362,22 @@ const MOCK = {
 // ═══════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════
-const API = 'http://127.0.0.1:8000/api/v1';
+// Override with localStorage.setItem('ecsi_api_base', 'https://your-api-host/api/v1') for a deployed API.
+const API = (localStorage.getItem('ecsi_api_base') || document.querySelector('meta[name="ecsi-api-base"]')?.content || `${location.origin}/api/v1`).replace(/\/$/, '');
+const API_ORIGIN = new URL(API, location.href).origin;
+const WS_API = `${API_ORIGIN.replace(/^http/i, 'ws')}/ws/dashboard`;
 let currentUser = null;
 let demoMode = false;
 let currentPage = null;
 let wsConn = null;
 let feedItems = [];
+let backendUsers = [];
+let backendAttendance = [];
+let backendNotifications = [];
+function appUsers(){return demoMode?MOCK.users:backendUsers;}
+function appAttendance(){return demoMode?MOCK.attendance:backendAttendance;}
+function appSections(){return demoMode?Object.keys(MOCK.sections):[...new Set(appUsers().map(u=>u.section).filter(Boolean))].sort();}
+function appAdviserFor(section){return appUsers().find(u=>u.role==='faculty'&&u.section===section)?.full_name||'';}
 
 function saveAuth(d){ try{localStorage.setItem('ecsi_auth',JSON.stringify(d));}catch{} }
 function loadAuth(){ try{return JSON.parse(localStorage.getItem('ecsi_auth')||'null');}catch{return null;} }
@@ -381,6 +393,20 @@ async function apiFetch(path, opts={}){
     if(r.status===401){ doLogout(); return null; }
     return r;
   }catch{ return null; }
+}
+
+async function apiFetchAll(path,pageSize=100){
+  const [route,query='']=path.split('?');
+  const params=new URLSearchParams(query);params.set('page_size',String(pageSize));
+  const records=[];
+  for(let page=1;page<=50;page++){
+    params.set('page',String(page));
+    const response=await apiFetch(`${route}?${params}`);
+    if(!response?.ok) return null;
+    const batch=await response.json();records.push(...batch);
+    if(batch.length<pageSize) return records;
+  }
+  return records;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -413,6 +439,10 @@ async function doLogin(){
     const d=await r.json();
     if(r.ok){
       currentUser={id:d.user_id,full_name:d.full_name,role:d.role,token:d.access_token};
+      try{
+        const profile=await fetch(API+'/users/me',{headers:{'Authorization':'Bearer '+d.access_token}});
+        if(profile.ok) currentUser={...currentUser,...await profile.json(),token:d.access_token};
+      }catch{}
       demoMode=false; loggedIn=true;
     } else {
       // Backend reachable but credentials wrong — show real error
@@ -522,7 +552,7 @@ function renderPage(page,el){
 // ═══════════════════════════════════════════════════════════
 function connectWS(){
   try{
-    wsConn=new WebSocket('ws://127.0.0.1:8000/ws/dashboard');
+    wsConn=new WebSocket(WS_API);
     wsConn.onopen=()=>{wsConn.send(JSON.stringify({token:currentUser.token}));setWsBadge('live');};
     wsConn.onmessage=e=>{
       try{
@@ -2413,6 +2443,7 @@ function renderUsers(el){
             <option value="">All Status</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
+            <option value="suspended">Suspended</option>
           </select>
         </div>
         <button class="btn btn-primary" onclick="loadUsers()">Search</button>
@@ -2448,13 +2479,22 @@ function renderUsers(el){
   loadUsers();
 }
 
-function loadUsers(){
+async function loadUsers(){
   const q=(document.getElementById('user-q')?.value||'').toLowerCase();
   const roleF=document.getElementById('user-role-f')?.value||'';
   const statF=document.getElementById('user-status-f')?.value||'';
   const tbody=document.getElementById('user-tbody');
   if(!tbody) return;
   let users=MOCK.users;
+  if(!demoMode){
+    const params=new URLSearchParams();
+    if(q) params.set('search',q);
+    if(roleF) params.set('role',roleF);
+    const records=await apiFetchAll('/users/?'+params,100);
+    if(!records){tbody.innerHTML='<tr class="empty-row"><td colspan="8">Could not load users from the server.</td></tr>';return;}
+    backendUsers=records;
+    users=backendUsers;
+  }
   if(q) users=users.filter(u=>u.full_name.toLowerCase().includes(q)||u.id_number.toLowerCase().includes(q));
   if(roleF) users=users.filter(u=>u.role===roleF);
   if(statF) users=users.filter(u=>u.status===statF);
@@ -2475,7 +2515,7 @@ function loadUsers(){
 }
 
 function _userFormHtml(u){
-  const sections=Object.keys(MOCK.sections);
+  const sections=appSections();
   const isEdit=!!u;
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
@@ -2489,7 +2529,7 @@ function _userFormHtml(u){
       </div>
       <div>
         <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Role *</label>
-        <select id="uf-role" onchange="userFormRoleChanged()" style="width:100%;box-sizing:border-box">
+        <select id="uf-role" onchange="userFormRoleChanged()" ${isEdit?'disabled':''} style="width:100%;box-sizing:border-box">
           <option value="student" ${isEdit&&u.role==='student'?'selected':''}>Student</option>
           <option value="faculty" ${isEdit&&u.role==='faculty'?'selected':''}>Faculty</option>
           <option value="super_admin" ${isEdit&&u.role==='super_admin'?'selected':''}>Super Admin</option>
@@ -2510,6 +2550,7 @@ function _userFormHtml(u){
         <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Email</label>
         <input id="uf-email" type="email" value="${isEdit?u.email||'':''}" placeholder="user@school.edu" style="width:100%;box-sizing:border-box"/>
       </div>
+      ${!isEdit?`<div><label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Initial Password *</label><input id="uf-password" type="password" minlength="8" placeholder="At least 8 characters" style="width:100%;box-sizing:border-box"/></div>`:''}
       <div>
         <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Mobile</label>
         <input id="uf-phone" type="text" value="${isEdit?u.phone||'':''}" placeholder="09XXXXXXXXX" style="width:100%;box-sizing:border-box"/>
@@ -2531,6 +2572,7 @@ function _userFormHtml(u){
         <select id="uf-status" style="width:100%;box-sizing:border-box">
           <option value="active" ${!isEdit||u.status==='active'?'selected':''}>Active</option>
           <option value="inactive" ${isEdit&&u.status==='inactive'?'selected':''}>Inactive</option>
+          <option value="suspended" ${isEdit&&u.status==='suspended'?'selected':''}>Suspended</option>
         </select>
       </div>
     </div>
@@ -2554,7 +2596,7 @@ function openUserModal(userId){
   const title=document.getElementById('user-modal-title');
   const body=document.getElementById('user-modal-body');
   if(!modal||!body) return;
-  const u=userId?MOCK.users.find(x=>x.id===userId):null;
+  const u=userId?appUsers().find(x=>x.id===userId):null;
   title.textContent=u?'Edit User':'Add New User';
   body.innerHTML=_userFormHtml(u);
   modal.style.display='flex';
@@ -2562,7 +2604,7 @@ function openUserModal(userId){
 }
 function closeUserModal(){ document.getElementById('user-modal').style.display='none'; }
 
-function saveUser(userId){
+async function saveUser(userId){
   const name=(document.getElementById('uf-name')?.value||'').trim();
   const idNum=(document.getElementById('uf-id')?.value||'').trim();
   const role=document.getElementById('uf-role')?.value||'student';
@@ -2578,11 +2620,22 @@ function saveUser(userId){
 
   if(!name||!idNum){errEl.textContent='Full Name and ID Number are required.';errEl.style.display='block';return;}
   // Check duplicate ID (on create)
-  if(!userId && MOCK.users.find(u=>u.id_number===idNum)){
+  if(demoMode&&!userId && MOCK.users.find(u=>u.id_number===idNum)){
     errEl.textContent='ID Number already exists.';errEl.style.display='block';return;
   }
 
-  if(userId){
+  if(!demoMode){
+    const payload={full_name:name,email:email||null,department:role==='student'?null:dept||null,section:role==='student'?section||null:null,phone:phone||null,address:address||null,parent_name:parentName||null,parent_contact:parentContact||null,status};
+    let response;
+    if(userId) response=await apiFetch(`/users/${userId}`,{method:'PATCH',body:JSON.stringify(payload)});
+    else {
+      payload.id_number=idNum;payload.role=role;payload.password=document.getElementById('uf-password')?.value||'';
+      if(payload.password.length<8){errEl.textContent='Initial password must be at least 8 characters.';errEl.style.display='block';return;}
+      response=await apiFetch('/users/',{method:'POST',body:JSON.stringify(payload)});
+    }
+    if(!response?.ok){let msg='Could not save user.';try{const data=await response.json();msg=data.detail||msg;}catch{}errEl.textContent=msg;errEl.style.display='block';return;}
+    closeUserModal();await loadUsers();
+  } else if(userId){
     // UPDATE
     const u=MOCK.users.find(x=>x.id===userId);
     if(u){
@@ -2615,13 +2668,17 @@ function saveUser(userId){
 
 let _delTargetId=null;
 function openDelModal(userId){
-  const u=MOCK.users.find(x=>x.id===userId);
+  const u=appUsers().find(x=>x.id===userId);
   if(!u) return;
   _delTargetId=userId;
   document.getElementById('user-del-name').textContent=`${u.full_name} (${u.id_number}) — this action cannot be undone.`;
   const modal=document.getElementById('user-del-modal');
   modal.style.display='flex';
   document.getElementById('user-del-confirm-btn').onclick=()=>{
+    if(!demoMode){
+      (async()=>{const r=await apiFetch(`/users/${_delTargetId}`,{method:'DELETE'});if(!r?.ok){alert('Could not delete user.');return;}closeDelModal();await loadUsers();})();
+      return;
+    }
     MOCK.users=MOCK.users.filter(x=>x.id!==_delTargetId);
     closeDelModal();loadUsers();
     const toast=document.createElement('div');
@@ -2640,6 +2697,7 @@ function closeDelModal(){document.getElementById('user-del-modal').style.display
 
 // Returns sections a faculty member advises (matched by adviser name in MOCK.sections)
 function getFacultyAdvisorySections(facultyUser){
+  if(!demoMode) return [...new Set(appUsers().filter(u=>u.role==='faculty'&&u.full_name===facultyUser.full_name&&u.section).map(u=>u.section))];
   return Object.keys(MOCK.sections).filter(sec=>
     MOCK.sections[sec].adviser===facultyUser.full_name
   );
@@ -2648,7 +2706,7 @@ function getFacultyAdvisorySections(facultyUser){
 // Returns true if an attendance record belongs to the faculty's advisory class
 function isInAdvisoryClass(rec, advisorySections){
   if(!advisorySections||!advisorySections.length) return false;
-  const student=MOCK.users.find(u=>u.id_number===rec.id_number);
+  const student=appUsers().find(u=>u.id_number===rec.id_number);
   return student ? advisorySections.includes(student.section||'') : false;
 }
 
@@ -2722,12 +2780,18 @@ async function loadAttendance(myOnly){
 // ═══════════════════════════════════════════════════════════
 function renderReports(el){
   const isFaculty=currentUser?.role==='faculty';
+  const weeklyData=demoMode?MOCK.weeklyAttendance:Array.from({length:7},(_,i)=>{
+    const date=new Date();date.setDate(date.getDate()-(6-i));
+    const key=date.toISOString().slice(0,10);
+    const records=appAttendance().filter(r=>(r.timestamp||'').slice(0,10)===key);
+    return {day:date.toLocaleDateString('en',{weekday:'short'}),verified:records.filter(r=>r.status==='verified').length,proxy:records.filter(r=>r.status==='proxy_anomaly').length};
+  });
   const advisorySections=isFaculty?getFacultyAdvisorySections(currentUser):[];
   const sectionLabel=advisorySections.length?`Advisory: ${advisorySections.join(', ')}`:'';
   // Filter attendance data to advisory class if faculty
   const reportRecs=isFaculty&&advisorySections.length
-    ? MOCK.attendance.filter(r=>isInAdvisoryClass(r,advisorySections))
-    : MOCK.attendance;
+    ? appAttendance().filter(r=>isInAdvisoryClass(r,advisorySections))
+    : appAttendance();
   el.innerHTML=`
     <div class="topbar">
       <span class="font-bold">Reports & Analytics</span>
@@ -2745,18 +2809,8 @@ function renderReports(el){
       <div class="card p-5" style="margin-bottom:20px${isFaculty?';display:none':''}">
         <div style="font-weight:700;margin-bottom:4px">Weekly Attendance Overview</div>
         <p style="font-size:12px;color:#6B7280;margin-bottom:16px">Check-ins per day — current week</p>
-        <div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding-bottom:24px;position:relative">
-          ${MOCK.weeklyAttendance.map(d=>{
-            const maxV=Math.max(...MOCK.weeklyAttendance.map(x=>x.verified));
-            const vH=maxV?Math.round((d.verified/maxV)*100):0;
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;position:relative">
-              <div style="font-size:10px;font-weight:700;color:#1F2937">${d.verified||''}</div>
-              <div style="width:100%;background:#41A638;border-radius:4px 4px 0 0;height:${vH}px;min-height:${d.verified?4:0}px;transition:height .3s;position:relative">
-                ${d.proxy?`<div style="position:absolute;top:-2px;right:-2px;width:8px;height:8px;background:#EF4444;border-radius:50%;border:1px solid #fff" title="${d.proxy} proxy"></div>`:''}
-              </div>
-              <div style="position:absolute;bottom:-20px;font-size:10px;color:#6B7280;font-weight:600">${d.day}</div>
-            </div>`;
-          }).join('')}
+        <div id="weekly-chart-bars" style="display:flex;align-items:flex-end;gap:8px;height:120px;padding-bottom:24px;position:relative">
+          ${renderWeeklyBars(weeklyData)}
         </div>
         <div style="display:flex;gap:16px;margin-top:8px">
           <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7280"><div style="width:10px;height:10px;background:#41A638;border-radius:2px"></div>Verified</div>
@@ -2845,6 +2899,39 @@ function renderReports(el){
       </div>
     </div>`;
   loadReportStats();
+  if(!demoMode) loadReportData();
+}
+
+async function loadReportData(){
+  const [records,users]=await Promise.all([apiFetchAll('/attendance',200),apiFetchAll('/users/',100)]);
+  if(!records) return;
+  backendAttendance=records;
+  if(users) backendUsers=users;
+  const body=document.getElementById('report-records');
+  if(body) body.innerHTML=renderReportRows(_getReportRecs());
+  const chart=document.getElementById('weekly-chart-bars');
+  if(chart&&!demoMode){
+    const data=Array.from({length:7},(_,i)=>{const date=new Date();date.setDate(date.getDate()-(6-i));const key=date.toISOString().slice(0,10);const day=backendAttendance.filter(x=>(x.timestamp||'').slice(0,10)===key);return{day:date.toLocaleDateString('en',{weekday:'short'}),verified:day.filter(x=>x.status==='verified').length,proxy:day.filter(x=>x.status==='proxy_anomaly').length};});
+    chart.innerHTML=renderWeeklyBars(data);
+  }
+  applyReportFilter();
+  if(currentUser?.role==='faculty') loadReportStats();
+}
+
+function renderWeeklyBars(data){
+  const maxV=Math.max(0,...data.map(x=>x.verified));
+  return data.map(d=>{const h=maxV?Math.round(d.verified/maxV*100):0;return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;position:relative"><div style="font-size:10px;font-weight:700;color:#1F2937">${d.verified||''}</div><div style="width:100%;background:#41A638;border-radius:4px 4px 0 0;height:${h}px;min-height:${d.verified?4:0}px;transition:height .3s;position:relative">${d.proxy?`<div style="position:absolute;top:-2px;right:-2px;width:8px;height:8px;background:#EF4444;border-radius:50%;border:1px solid #fff" title="${d.proxy} proxy"></div>`:''}</div><div style="position:absolute;bottom:-20px;font-size:10px;color:#6B7280;font-weight:600">${d.day}</div></div>`;}).join('');
+}
+
+function renderReportRows(records){
+  return records.length?records.map(r=>`<tr>
+    <td><div style="font-weight:500;font-size:13px">${r.full_name||'—'}</div><div style="font-size:11px;color:#6B7280;font-family:monospace">${r.id_number||''}</div></td>
+    <td>${badgeHtml(r.status)}</td>
+    <td>${r.cosine_distance!=null?`<span style="font-family:monospace;font-weight:700;font-size:12px;color:${r.cosine_distance<=0.4?'#41A638':'#EF4444'}">${r.cosine_distance.toFixed(4)}</span>`:'<span style="color:#9CA3AF">—</span>'}</td>
+    <td style="color:#6B7280;font-size:12px">${r.terminal_id||'—'}</td>
+    <td style="color:#6B7280;font-size:12px;text-transform:capitalize">${(r.check_type||'').replace('_',' ')}</td>
+    <td style="color:#6B7280;font-size:12px;white-space:nowrap">${new Date(r.timestamp).toLocaleString()}</td>
+  </tr>`).join(''):'<tr class="empty-row"><td colspan="6">No records found.</td></tr>';
 }
 
 async function loadReportStats(){
@@ -2855,9 +2942,9 @@ async function loadReportStats(){
     // Compute stats from advisory class records only
     const advisorySections=getFacultyAdvisorySections(currentUser);
     const recs=advisorySections.length
-      ? MOCK.attendance.filter(r=>isInAdvisoryClass(r,advisorySections))
+      ? appAttendance().filter(r=>isInAdvisoryClass(r,advisorySections))
       : [];
-    const advisoryStudents=MOCK.users.filter(u=>u.role==='student'&&u.status==='active'&&advisorySections.includes(u.section||''));
+    const advisoryStudents=appUsers().filter(u=>u.role==='student'&&u.status==='active'&&advisorySections.includes(u.section||''));
     g.innerHTML=[
       {label:'Verified (Advisory)',      value:recs.filter(r=>r.status==='verified').length,      color:'#41A638'},
       {label:'Proxy Anomalies',          value:recs.filter(r=>r.status==='proxy_anomaly').length,  color:'#EF4444'},
@@ -2897,8 +2984,8 @@ function applyReportFilter(){
   const isFaculty=currentUser?.role==='faculty';
   const secs=isFaculty?getFacultyAdvisorySections(currentUser):[];
   let recs=isFaculty&&secs.length
-    ? MOCK.attendance.filter(r=>isInAdvisoryClass(r,secs))
-    : MOCK.attendance;
+    ? appAttendance().filter(r=>isInAdvisoryClass(r,secs))
+    : appAttendance();
 
   // Name / ID search
   if(name) recs=recs.filter(r=>(r.full_name||'').toLowerCase().includes(name)||(r.id_number||'').toLowerCase().includes(name));
@@ -2935,9 +3022,9 @@ function _getReportRecs(){
   const isFaculty=currentUser?.role==='faculty';
   if(isFaculty){
     const secs=getFacultyAdvisorySections(currentUser);
-    return secs.length?MOCK.attendance.filter(r=>isInAdvisoryClass(r,secs)):[];
+    return secs.length?appAttendance().filter(r=>isInAdvisoryClass(r,secs)):[];
   }
-  return MOCK.attendance;
+  return appAttendance();
 }
 
 function exportAttendanceCSV(){
@@ -2946,7 +3033,7 @@ function exportAttendanceCSV(){
   const secs=isFaculty?getFacultyAdvisorySections(currentUser):[];
   const header=['Student Name','ID Number','Section','Status','Check Type','Cosine Distance','Terminal','Timestamp'];
   const rows=recs.map(r=>{
-    const stu=MOCK.users.find(u=>u.id_number===r.id_number);
+    const stu=appUsers().find(u=>u.id_number===r.id_number);
     return [
       `"${r.full_name||''}"`,
       r.id_number||'',
@@ -2974,8 +3061,8 @@ function openGenerateReport(){
   const isFaculty=currentUser?.role==='faculty';
   const secs=isFaculty?getFacultyAdvisorySections(currentUser):[];
   const advisoryStudents=secs.length
-    ? MOCK.users.filter(u=>u.role==='student'&&u.status==='active'&&secs.includes(u.section||''))
-    : MOCK.users.filter(u=>u.role==='student'&&u.status==='active');
+    ? appUsers().filter(u=>u.role==='student'&&u.status==='active'&&secs.includes(u.section||''))
+    : appUsers().filter(u=>u.role==='student'&&u.status==='active');
   const verified=recs.filter(r=>r.status==='verified').length;
   const proxy=recs.filter(r=>r.status==='proxy_anomaly').length;
   const noFace=recs.filter(r=>r.status==='no_face_template').length;
@@ -3439,7 +3526,11 @@ function setExcuseAlert(type,msg){
 // ═══════════════════════════════════════════════════════════
 // NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════
-function renderNotifications(el){
+async function renderNotifications(el){
+  if(!demoMode){
+    const settingsResponse=await apiFetch('/notifications/settings');
+    if(settingsResponse?.ok){const saved=await settingsResponse.json();MOCK.notifSettings={...MOCK.notifSettings,...saved,recipients:{...MOCK.notifSettings.recipients,...saved.recipients},triggers:{...MOCK.notifSettings.triggers,...saved.triggers}};}
+  }
   // Mark all current user's system notifications as seen
   if(currentUser?.role==='parent'){
     _getMySystemNotifs().forEach(n=>_seenNotifIds.add(n.id));
@@ -3612,7 +3703,7 @@ function renderNotifications(el){
             ${[['parents','Parents / Guardians'],['admins','Administrators'],['faculty','Faculty']].map(([k,lbl])=>`
             <label style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:8px 0">
               <span style="font-size:13px">${lbl}</span>
-              <input type="checkbox" id="recv-${k}" ${cfg.recipients[k]?'checked':''} onchange="MOCK.notifSettings.recipients['${k}']=this.checked" style="width:15px;height:15px;accent-color:#F2C111"/>
+              <input type="checkbox" id="recv-${k}" ${cfg.recipients[k]?'checked':''} onchange="setNotifSetting('recipients','${k}',this.checked)" style="width:15px;height:15px;accent-color:#F2C111"/>
             </label>`).join('')}
           </div>
         </div>
@@ -3630,7 +3721,7 @@ function renderNotifications(el){
             ].map(([k,lbl])=>`
             <label style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:6px 0;border-bottom:1px solid #F3F4F6">
               <span style="font-size:12px">${lbl}</span>
-              <input type="checkbox" id="trig-${k}" ${cfg.triggers[k]?'checked':''} onchange="MOCK.notifSettings.triggers['${k}']=this.checked" style="width:15px;height:15px;accent-color:#F2C111"/>
+              <input type="checkbox" id="trig-${k}" ${cfg.triggers[k]?'checked':''} onchange="setNotifSetting('triggers','${k}',this.checked)" style="width:15px;height:15px;accent-color:#F2C111"/>
             </label>`).join('')}
           </div>
         </div>
@@ -3640,22 +3731,31 @@ function renderNotifications(el){
           <div style="font-weight:700;margin-bottom:12px">Delivery Stats</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <div style="text-align:center;padding:10px;background:#F0FDF4;border-radius:8px">
-              <div style="font-size:22px;font-weight:800;color:#41A638">${MOCK.notifLog.filter(n=>n.status==='delivered').length}</div>
-              <div style="font-size:10px;color:#6B7280;text-transform:uppercase;font-weight:700">Delivered</div>
+              <div data-notif-count style="font-size:22px;font-weight:800;color:#41A638">${MOCK.notifLog.filter(n=>n.status==='delivered').length}</div>
+              <div style="font-size:10px;color:#6B7280;text-transform:uppercase;font-weight:700">Stored / Delivered</div>
             </div>
             <div style="text-align:center;padding:10px;background:#FFF1F2;border-radius:8px">
-              <div style="font-size:22px;font-weight:800;color:#EF4444">${MOCK.notifLog.filter(n=>n.status==='failed').length}</div>
-              <div style="font-size:10px;color:#6B7280;text-transform:uppercase;font-weight:700">Failed</div>
+              <div data-notif-count style="font-size:22px;font-weight:800;color:#D97706">${MOCK.notifLog.filter(n=>n.status==='failed').length}</div>
+              <div style="font-size:10px;color:#6B7280;text-transform:uppercase;font-weight:700">Queued (SMS / email)</div>
             </div>
           </div>
         </div>
       </div>
     </div>`;
+  if(!demoMode){
+    const r=await apiFetch('/notifications/');
+    if(!r?.ok){document.getElementById('notif-log-list').innerHTML='<div style="padding:20px;color:#B91C1C">Could not load notifications from the backend.</div>';return;}
+    backendNotifications=await r.json();
+    const log=document.getElementById('notif-log-list');if(log)log.innerHTML=renderNotifLog();
+    const delivered=backendNotifications.filter(n=>n.status==='delivered'||n.status==='stored').length;
+    const queued=backendNotifications.filter(n=>n.status==='queued').length;
+    const values=document.querySelectorAll('[data-notif-count]');if(values[0])values[0].textContent=delivered;if(values[1])values[1].textContent=queued;
+  }
 }
 
 function renderNotifLog(){
   // Parents only see their targeted system notifs + broadcasts; others see all
-  let logs = MOCK.notifLog;
+  let logs = demoMode?MOCK.notifLog:backendNotifications.map(n=>({...n,type:n.channel,recipient:n.recipient_label,sent_at:n.created_at,sender:n.sender_name,recipient_id:n.recipient_user_id}));
   if(currentUser?.role==='parent'){
     logs = logs.filter(n=>
       n.recipient_id===currentUser.id ||   // targeted to this parent
@@ -3680,7 +3780,7 @@ function renderNotifLog(){
           <span style="font-weight:600;font-size:13px">${isNew?'🔵 ':''} ${n.subject}</span>
           <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
             <span style="font-size:10px;padding:2px 7px;border-radius:99px;background:${ts.bg};color:#374151;font-weight:600">${ts.label}</span>
-            <span class="badge ${n.status==='delivered'?'badge-green':'badge-red'}">${n.status||'sent'}</span>
+            <span class="badge ${n.status==='delivered'||n.status==='stored'?'badge-green':n.status==='queued'?'badge-yellow':'badge-red'}">${n.status||'sent'}</span>
           </div>
         </div>
         <div style="font-size:11px;color:#6B7280;margin-bottom:3px">${currentUser?.role==='parent'?'From: '+( n.sender||'ECSI System'):'→ '+n.recipient}</div>
@@ -3691,8 +3791,17 @@ function renderNotifLog(){
   }).join('');
 }
 
+async function setNotifSetting(group,key,value){
+  MOCK.notifSettings[group][key]=value;
+  if(!demoMode){
+    const r=await apiFetch('/notifications/settings',{method:'PUT',body:JSON.stringify({settings:MOCK.notifSettings})});
+    if(!r?.ok) alert('Could not save notification settings.');
+  }
+}
+
 function toggleNotifChannel(ch){
   MOCK.notifSettings[ch+'_enabled']=!MOCK.notifSettings[ch+'_enabled'];
+  if(!demoMode) apiFetch('/notifications/settings',{method:'PUT',body:JSON.stringify({settings:MOCK.notifSettings})});
   const on=MOCK.notifSettings[ch+'_enabled'];
   const el=document.getElementById(ch+'-toggle');
   if(el){el.style.background=on?'#41A638':'#D1D5DB';el.firstElementChild.style[on?'right':'left']='2px';el.firstElementChild.style[on?'left':'right']='';}
@@ -4020,7 +4129,7 @@ function _notifSendAllAdvisoryParents(){
   setTimeout(()=>document.getElementById('compose-section')?.scrollIntoView({behavior:'smooth',block:'center'}),100);
 }
 
-function sendNotification(){
+async function sendNotification(){
   const channel=document.getElementById('notif-channel')?.value;
   const recipients=document.getElementById('notif-recipients')?.value;
   const subject=document.getElementById('notif-subject')?.value?.trim();
@@ -4032,6 +4141,26 @@ function sendNotification(){
   }
   const btn=document.querySelector('#compose-section .btn-primary');
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Sending…';}
+  if(!demoMode){
+    const isParentTarget=recipients?.startsWith('parent:');
+    const recipientId=isParentTarget?recipients.split(':')[1]:null;
+    const recipientLabel=isParentTarget?recipients.split(':')[2]+' (Parent)':{parents:'All Parents',admins:'Administrators',faculty:'Faculty',all:'Everyone'}[recipients]||recipients;
+      const roleMap={admins:'super_admin',faculty:'faculty',parents:'parents',all:'all'};
+    const channels={sms:['sms'],email:['email'],system:['system'],both:['sms','email'],all:['sms','email','system']}[channel]||[channel];
+    let failure='';
+    for(const ch of channels){
+      const r=await apiFetch('/notifications/',{method:'POST',body:JSON.stringify({channel:ch,recipient_label:recipientLabel,recipient_user_id:ch==='system'?recipientId:null,recipient_role:roleMap[recipients]||null,subject,body})});
+      if(!r?.ok){try{failure=(await r.json()).detail||'Could not save notification.';}catch{failure='Could not save notification.';}break;}
+    }
+    if(failure){if(alertEl)alertEl.innerHTML=`<div class="alert alert-error" style="margin:0">${failure}</div>`;if(btn){btn.disabled=false;btn.textContent='Send Now';}return;}
+    const list=await apiFetch('/notifications/');if(list?.ok)backendNotifications=await list.json();
+    const chLabel={sms:'SMS',email:'Email',system:'In-System',both:'SMS + Email',all:'All Channels'}[channel]||channel.toUpperCase();
+    if(alertEl)alertEl.innerHTML=`<div class="alert alert-success" style="margin:0">Saved via <strong>${chLabel}</strong> to <strong>${recipientLabel}</strong>. SMS/email records are queued until a provider is configured.</div>`;
+    const log=document.getElementById('notif-log-list');if(log)log.innerHTML=renderNotifLog();
+    document.getElementById('notif-subject').value='';document.getElementById('notif-body').value='';
+    if(btn){btn.disabled=false;btn.textContent='Send Now';}
+    return;
+  }
   setTimeout(()=>{
     const isParentTarget=recipients?.startsWith('parent:');
     const recipientId=isParentTarget?recipients.split(':')[1]:null;
@@ -4067,10 +4196,15 @@ function sendNotification(){
 // ═══════════════════════════════════════════════════════════
 let enrolState={step:'list',selected:null,rfidUid:'',frames:[],addingNew:false};
 
-function renderEnrollment(el){
+async function renderEnrollment(el){
   enrolState={step:'list',selected:null,rfidUid:'',frames:[],addingNew:false};
+  if(!demoMode){
+    const users=await apiFetchAll('/users/',100);
+    if(users) backendUsers=users;
+    else {el.innerHTML='<div class="page-content"><div class="alert alert-error">Unable to load students from the backend.</div></div>';return;}
+  }
   if(currentUser.role==='student'){
-    const me=MOCK.users.find(u=>u.id_number===currentUser.id_number)||currentUser;
+    const me=appUsers().find(u=>u.id_number===currentUser.id_number)||currentUser;
     enrolState.selected=me; enrolState.step='rfid';
   }
   renderEnrolInner(el);
@@ -4124,13 +4258,13 @@ function renderEnrolStep(){
 
   // ── STUDENT LIST (default view) ──────────────────────────
   if(s.step==='list'){
-    const students=MOCK.users.filter(u=>u.role==='student');
+    const students=appUsers().filter(u=>u.role==='student');
     body.innerHTML=`
       <div style="margin-bottom:12px;display:flex;gap:10px;align-items:center">
         <input type="text" id="enrol-q" placeholder="Search by name or ID…" style="flex:1;padding:9px 14px;font-size:13px" oninput="enrolFilterList()"/>
         <select id="enrol-section-filter" onchange="enrolFilterList()" style="padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;background:#fff;color:#374151;min-width:160px">
           <option value="">All Sections</option>
-          ${Object.keys(MOCK.sections).map(s=>`<option value="${s}">${s}</option>`).join('')}
+          ${appSections().map(s=>`<option value="${s}">${s}</option>`).join('')}
         </select>
         <select id="enrol-status-filter" onchange="enrolFilterList()" style="padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;background:#fff;color:#374151">
           <option value="">All Status</option>
@@ -4173,7 +4307,7 @@ function renderEnrolStep(){
               <label>Section</label>
               <select id="ns-section" onchange="enrolSectionChanged(this.value)" style="width:100%;padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;background:#fff">
                 <option value="">— Select section —</option>
-                ${Object.keys(MOCK.sections).map(s=>`<option value="${s}">${s}</option>`).join('')}
+                ${appSections().map(s=>`<option value="${s}">${s}</option>`).join('')}
                 <option value="__other__">Other (type below)</option>
               </select>
               <input type="text" id="ns-section-custom" placeholder="e.g., Grade 10-A" style="display:none;margin-top:6px"/>
@@ -4184,6 +4318,7 @@ function renderEnrolStep(){
             <span style="color:#6B7280">👤 Adviser:</span> <strong id="ns-adviser-name"></strong>
           </div>
           <div><label>Email (optional)</label><input type="text" id="ns-email" placeholder="student@ecsi.edu.ph"/></div>
+          <div><label>Initial Password *</label><input type="password" id="ns-password" minlength="8" placeholder="At least 8 characters"/></div>
           <div style="border-top:1px solid #E5E7EB;padding-top:14px;margin-top:2px">
             <div style="font-size:12px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">👨‍👩‍👧 Parent / Guardian Information</div>
             <div style="display:grid;gap:14px">
@@ -4291,7 +4426,7 @@ function renderEnrolStep(){
   if(s.step==='done'){
     const stu=s.selected;
     const sec=stu?.section||stu?.department||'';
-    const adviser=MOCK.sections[sec]?.adviser||'';
+    const adviser=demoMode?(MOCK.sections[sec]?.adviser||''):appAdviserFor(sec);
     body.innerHTML=`
       <div class="card p-8" style="text-align:center">
         <div style="width:64px;height:64px;background:#D1FAE5;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:28px">✓</div>
@@ -4373,6 +4508,11 @@ function enrolShowAdvisers(){
 }
 
 function renderAdvisersPanel(body){
+  if(!demoMode){
+    const bySection=appSections().map(section=>({section,adviser:appAdviserFor(section),students:appUsers().filter(u=>u.role==='student'&&u.section===section).length}));
+    body.innerHTML=`<div class="card p-4"><h3 style="margin-bottom:12px">Sections and Advisers</h3><div class="table-wrap"><table><thead><tr><th>Section</th><th>Adviser</th><th>Students</th></tr></thead><tbody>${bySection.map(x=>`<tr><td>${x.section}</td><td>${x.adviser||'Unassigned'}</td><td>${x.students}</td></tr>`).join('')||'<tr><td colspan="3">No sections found in the database.</td></tr>'}</tbody></table></div><p class="text-sm" style="color:#6B7280;margin-top:12px">Section and adviser assignments come from student and faculty profiles.</p><button class="btn btn-secondary" style="margin-top:12px" onclick="enrolGoList()">Back to Students</button></div>`;
+    return;
+  }
   const sectionKeys=Object.keys(MOCK.sections);
   body.innerHTML=`
     <div class="card" style="overflow:hidden">
@@ -4473,10 +4613,12 @@ function enrolSectionChanged(val){
     customInput.style.display='';
     deptInput.value=''; deptInput.readOnly=false;
     adviserRow.style.display='none';
-  } else if(val&&MOCK.sections[val]){
+  } else if(val&&(demoMode?MOCK.sections[val]:appSections().includes(val))){
     customInput.style.display='none';
-    deptInput.value=MOCK.sections[val].department; deptInput.readOnly=true;
-    adviserName.textContent=MOCK.sections[val].adviser;
+    const sample=demoMode?MOCK.sections[val]:null;
+    const student=appUsers().find(u=>u.role==='student'&&u.section===val);
+    deptInput.value=sample?.department||student?.department||''; deptInput.readOnly=!!sample||!!student?.department;
+    adviserName.textContent=sample?.adviser||appAdviserFor(val)||'Unassigned';
     adviserRow.style.display='';
   } else {
     customInput.style.display='none';
@@ -4489,7 +4631,7 @@ function enrolFilterList(){
   const q=(document.getElementById('enrol-q')?.value||'').toLowerCase();
   const secF=document.getElementById('enrol-section-filter')?.value||'';
   const statF=document.getElementById('enrol-status-filter')?.value||'';
-  let students=MOCK.users.filter(u=>u.role==='student');
+  let students=appUsers().filter(u=>u.role==='student');
   if(q) students=students.filter(u=>u.full_name.toLowerCase().includes(q)||u.id_number.toLowerCase().includes(q));
   if(secF) students=students.filter(u=>(u.section||u.department||'')=== secF);
   if(statF==='complete') students=students.filter(u=>u.has_rfid&&u.has_face);
@@ -4514,18 +4656,25 @@ function enrolGoList(){
   renderEnrolInner(el);
 }
 
-function enrolCreateStudent(){
+async function enrolCreateStudent(){
   const id=document.getElementById('ns-id')?.value?.trim();
   const name=document.getElementById('ns-name')?.value?.trim();
   const selVal=document.getElementById('ns-section')?.value||'';
   const section=(selVal==='__other__'?(document.getElementById('ns-section-custom')?.value?.trim()||''):selVal);
-  const dept=document.getElementById('ns-dept')?.value?.trim()||MOCK.sections[section]?.department||'';
+  const dept=document.getElementById('ns-dept')?.value?.trim()||(demoMode?MOCK.sections[section]?.department:appUsers().find(u=>u.role==='student'&&u.section===section)?.department)||'';
   const parentName=document.getElementById('ns-parent-name')?.value?.trim();
   const parentContact=document.getElementById('ns-parent-contact')?.value?.trim();
+  const password=document.getElementById('ns-password')?.value||'';
   if(!id||!name){setEnrolAlert('error','ID Number and Full Name are required.');return;}
   if(!parentName||!parentContact){setEnrolAlert('error','Parent / Guardian name and contact number are required.');return;}
   if(!/^(09|\+639)\d{9}$/.test(parentContact.replace(/\s/g,''))){setEnrolAlert('error','Enter a valid PH mobile number (e.g., 09171234567 or +639171234567).');return;}
-  if(MOCK.users.find(u=>u.id_number===id)){setEnrolAlert('error','ID Number already exists.');return;}
+  if(password.length<8){setEnrolAlert('error','Initial password must be at least 8 characters.');return;}
+  if(appUsers().find(u=>u.id_number===id)){setEnrolAlert('error','ID Number already exists.');return;}
+  if(!demoMode){
+    const r=await apiFetch('/users/',{method:'POST',body:JSON.stringify({id_number:id,full_name:name,email:document.getElementById('ns-email')?.value?.trim()||null,password,role:'student',section:section||null,department:dept||null,parent_name:parentName,parent_contact:parentContact})});
+    if(!r?.ok){let msg='Could not create student.';try{msg=(await r.json()).detail||msg;}catch{}setEnrolAlert('error',msg);return;}
+    const saved=await r.json();backendUsers=[...backendUsers,saved];enrolState.selected={...saved,has_rfid:false,has_face:false};enrolState.step='rfid';renderEnrolInner(document.getElementById('page-enrollment'));return;
+  }
   const newStudent={id:'u-'+Date.now(),id_number:id,full_name:name,role:'student',department:dept,section:section,has_rfid:false,has_face:false,status:'active',parent_name:parentName,parent_contact:parentContact,_justEnrolled:true};
   MOCK.users.push(newStudent);
   enrolState.selected=newStudent;
@@ -4543,7 +4692,7 @@ function checkRfidDuplicate(input){
   const warn=document.getElementById('rfid-dup-warn');
   const btn=document.getElementById('rfid-bind-btn');
   if(!warn||!uid){if(warn)warn.style.display='none';if(btn)btn.disabled=false;return;}
-  const ownerId=MOCK.rfidCards[uid];
+  const ownerId=demoMode?MOCK.rfidCards[uid]:null;
   if(ownerId && ownerId!==enrolState.selected?.id){
     const owner=MOCK.users.find(u=>u.id===ownerId);
     warn.style.display='block';
@@ -4560,7 +4709,7 @@ async function enrolBindRFID(){
   if(!uid){setEnrolAlert('error','Please enter an RFID UID.');return;}
 
   // Duplicate check
-  const existingOwner=MOCK.rfidCards[uid];
+  const existingOwner=demoMode?MOCK.rfidCards[uid]:null;
   if(existingOwner && existingOwner!==enrolState.selected?.id){
     const owner=MOCK.users.find(u=>u.id===existingOwner);
     setEnrolAlert('error',`This card (${uid}) is already bound to ${owner?owner.full_name+' — '+owner.id_number:'another user'}. Each card can only be assigned to one person.`);
@@ -4588,6 +4737,8 @@ async function enrolBindRFID(){
     const r=await apiFetch(`/enrollment/${enrolState.selected.id}/rfid`,{method:'POST',body:JSON.stringify({card_uid:uid})});
     const d=await r.json();
     if(!r.ok){setEnrolAlert('error',d.detail||'Binding failed. The card may already be in use.');return;}
+    enrolState.selected.has_rfid=true;enrolState.selected.rfid_uid=d.card_uid;
+    backendUsers=backendUsers.map(u=>u.id===enrolState.selected.id?{...u,has_rfid:true,rfid_uid:d.card_uid}:u);
     setEnrolAlert('success',`Card <strong>${uid}</strong> bound successfully.`);
     setTimeout(()=>enrolNext('face'),700);
   }catch{setEnrolAlert('error','Server error.');}
@@ -4771,6 +4922,8 @@ async function enrolFaceConfirmed(){
       if(btn){btn.disabled=false;btn.textContent='Enroll Face';}
       return;
     }
+    enrolState.selected.has_face=true;
+    backendUsers=backendUsers.map(u=>u.id===enrolState.selected.id?{...u,has_face:true}:u);
     setEnrolAlert('success','Face enrolled successfully!');
     setTimeout(()=>enrolNext('done'),700);
   }catch{

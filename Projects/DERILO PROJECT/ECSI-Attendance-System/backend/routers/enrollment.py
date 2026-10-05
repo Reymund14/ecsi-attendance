@@ -207,6 +207,7 @@ async def enrollment_status(user_id: uuid.UUID, db: AsyncSession = Depends(get_d
         "user_id": str(user.id),
         "full_name": user.full_name,
         "has_rfid": user.rfid_card is not None and user.rfid_card.is_active,
+        "rfid_uid": user.rfid_card.card_uid if user.rfid_card is not None and user.rfid_card.is_active else None,
         "has_face_embedding": user.face_embedding is not None,
         "enrollment_complete": (
             user.rfid_card is not None

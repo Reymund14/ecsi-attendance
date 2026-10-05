@@ -87,6 +87,10 @@ async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
         role=body.role,
         department=body.department,
         section=body.section,
+        phone=body.phone,
+        address=body.address,
+        parent_name=body.parent_name,
+        parent_contact=body.parent_contact,
     )
     db.add(user)
     await db.flush()

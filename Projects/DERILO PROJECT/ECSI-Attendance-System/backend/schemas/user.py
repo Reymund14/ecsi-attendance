@@ -20,6 +20,10 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.STUDENT
     department: Optional[str] = None
     section: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    parent_name: Optional[str] = None
+    parent_contact: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -27,6 +31,10 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     department: Optional[str] = None
     section: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    parent_name: Optional[str] = None
+    parent_contact: Optional[str] = None
     status: Optional[AccountStatus] = None
 
 
@@ -44,8 +52,13 @@ class UserOut(BaseModel):
     status: AccountStatus
     department: Optional[str]
     section: Optional[str]
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    parent_name: Optional[str] = None
+    parent_contact: Optional[str] = None
     profile_photo_path: Optional[str]
     has_rfid: bool = False
+    rfid_uid: Optional[str] = None
     has_face: bool = False
     created_at: datetime
 
@@ -54,7 +67,8 @@ class UserOut(BaseModel):
     @classmethod
     def from_orm_extended(cls, user: "User") -> "UserOut":  # type: ignore[name-defined]
         obj = cls.model_validate(user)
-        obj.has_rfid = user.rfid_card is not None
+        obj.has_rfid = user.rfid_card is not None and user.rfid_card.is_active
+        obj.rfid_uid = user.rfid_card.card_uid if obj.has_rfid else None
         obj.has_face = user.face_embedding is not None
         return obj
 

@@ -86,6 +86,10 @@ class User(Base):
     profile_photo_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     department: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     section: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    parent_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    parent_contact: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -27,10 +27,11 @@ Browser ──HTTPS──> Vercel (static page)
 
 * `index.html` reads its endpoints from `%VITE_API_BASE_URL%` / `%VITE_WS_URL%`,
   which Vite substitutes at build time. No more hardcoded `localhost`.
-* `backend/requirements-render.txt` drops OpenCV, DeepFace, TensorFlow and
-  ONNX — roughly **1.5 GB** of dependencies the cloud service never touches.
-* `services/face_service.py` imports `cv2` / `numpy` / `DeepFace` lazily
-  inside `try/except`, so `main.py` starts cleanly without them installed.
+* `backend/requirements-render.txt` includes the CPU OpenCV / DeepFace face
+  enrollment stack. The package set and downloaded model weights are large.
+* `services/face_service.py` imports `cv2` / `numpy` / `DeepFace` lazily,
+  allowing the API to start and report a clear health status if a dependency
+  is unavailable.
 * `config.py` refuses to boot in production with a placeholder/short
   `SECRET_KEY` or a SQLite `DATABASE_URL`, and accepts `ALLOWED_ORIGINS` as
   either a JSON array or a comma-separated list.
@@ -203,7 +204,7 @@ If you would rather use the Dashboard: **New → Web Service**, then set
 | Field | Value |
 |---|---|
 | Root Directory | `Projects/DERILO PROJECT/ECSI-Attendance-System/backend` |
-| Runtime | Python (3.11+) |
+| Runtime | Python 3.11 |
 | Build Command | `pip install --upgrade pip && pip install -r requirements-render.txt` |
 | Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1` |
 | Health Check Path | `/health` |
@@ -250,9 +251,14 @@ curl https://<service>.onrender.com/health/ready
 ```
 
 Expected: `{"status":"ok", ...}` then
-`{"status":"ready","environment":"production","database":"connected","face_pipeline_available":false}`.
+`{"status":"ready","environment":"production","database":"connected","face_pipeline_available":true}`.
 
-`face_pipeline_available: false` is **expected and correct** in the cloud.
+The Render requirements install the CPU face pipeline. DeepFace downloads its
+ArcFace model weights the first time a face is enrolled, so that first request
+can take longer than later requests. Allow adequate memory and disk for the
+TensorFlow/OpenCV dependencies and downloaded model weights. The service still
+receives camera frames from the browser; it cannot access a camera physically
+attached to your computer.
 
 ---
 
@@ -328,7 +334,7 @@ offline in the UI.
 | Limitation | Impact | Mitigation |
 |---|---|---|
 | **No physical camera/RFID on Render** | `services/camera_service.py`, `attendance_service.py` and `rfid_service.py` are unreachable on cloud. They are not imported by `main.py`. | Attendance is produced in the browser and POSTed as base64. Run the full requirements on an on-prem/edge box with a camera to use the real pipeline. |
-| **Face enrollment returns 503** | DeepFace/OpenCV are excluded from `requirements-render.txt`. `enroll_face` checks `face_pipeline_available()` and returns `503` with an explanatory message, rather than a misleading `422 "no valid faces detected"`. | Enroll faces on a local/edge instance, or add a separate GPU service. |
+| **Face enrollment returns 503** | Check Render deploy logs and `/health/ready`; `face_pipeline_available` should be `true`. Confirm the service uses `backend/requirements-render.txt` and redeploy after dependency changes. | Resolve dependency/build failures, then redeploy. |
 | **Browser "face verification" is a simulation** | `index.html` matches against local mock hashes — it is not real biometric matching and trivially bypassable. | Replace with server-side ArcFace inference before using this for anything that matters. |
 | **Audit captures need a camera path** | The private bucket works, but on Render nothing writes to it: only `attendance_service.py` (camera) produces frames, and it never runs in the cloud. | `/capture` and `/intruder` return `410` until records are written by an edge instance. |
 | **Free Render instances sleep** | After ~15 min idle the API sleeps and live `wss://` dashboards disconnect. | Use the `starter` plan for reliable live feeds. |
@@ -383,7 +389,7 @@ project before you assume the live site works.
 
 | Symptom | Cause / fix |
 |---|---|
-| Render build fails on `deepface`/`opencv` | Wrong requirements file — must be `requirements-render.txt`. |
+| Render build fails on `deepface`/`opencv` | Check Python is set to 3.11 and inspect Render build logs for dependency or resource failures. |
 | `RuntimeError: DATABASE_URL must point at PostgreSQL` | `ENVIRONMENT=production` with a SQLite URL. Set the Supabase URL. |
 | `STORAGE_BACKEND resolved to 'local'` at boot | Production needs durable storage: set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, or `STORAGE_BACKEND=supabase`. |
 | `STORAGE_BACKEND=supabase but SUPABASE_URL ... empty` | One of the two Supabase credentials is missing in Render's Environment tab (§2b). |

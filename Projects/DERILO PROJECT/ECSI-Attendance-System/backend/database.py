@@ -58,6 +58,26 @@ async def get_db():
 # ── Init (called on startup) ──────────────────────────────────────────────────
 async def init_db() -> None:
     """Create all tables defined via the ORM if they do not already exist."""
-    from models import user, attendance  # noqa: F401
+    from models import user, attendance, notification  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add profile fields to databases created before these fields existed.
+        columns = {
+            "phone": "VARCHAR(32)",
+            "address": "VARCHAR(255)",
+            "parent_name": "VARCHAR(128)",
+            "parent_contact": "VARCHAR(32)",
+        }
+        if _is_sqlite:
+            existing = await conn.run_sync(
+                lambda sync_conn: {column["name"] for column in
+                                   __import__("sqlalchemy").inspect(sync_conn).get_columns("users")}
+            )
+            for name, sql_type in columns.items():
+                if name not in existing:
+                    await conn.exec_driver_sql(f"ALTER TABLE users ADD COLUMN {name} {sql_type}")
+        else:
+            for name, sql_type in columns.items():
+                await conn.exec_driver_sql(
+                    f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {name} {sql_type}"
+                )
