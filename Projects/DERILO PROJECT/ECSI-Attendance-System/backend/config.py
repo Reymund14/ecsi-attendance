@@ -13,6 +13,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Placeholder shipped in config.py — never acceptable in production.
 INSECURE_SECRET_KEY = "CHANGE_THIS_IN_PRODUCTION_USE_256_BIT_RANDOM_KEY"
 
+# Markers left behind by backend/.env.production, which still ships the
+# template. A credential containing one of these was never filled in, and
+# sending it to Supabase produces a 400/403 that reads like a code bug.
+_PLACEHOLDER_MARKERS = ("CHANGE_ME", "YOUR-PROJECT-REF", "paste_the")
+
+
+def _is_placeholder(value: str) -> bool:
+    """True when a credential is still the untouched template value."""
+    return any(marker in value for marker in _PLACEHOLDER_MARKERS)
+
 
 class Settings(BaseSettings):
     # ── Application ──────────────────────────────────────────────
@@ -99,7 +109,10 @@ class Settings(BaseSettings):
     WS_HEARTBEAT_INTERVAL: int = 30   # seconds
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Precedence: real environment variables > .env.local > .env.
+        # .env.local is gitignored, so it is the safe place for a real
+        # SUPABASE_SERVICE_ROLE_KEY during development.
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -129,11 +142,63 @@ class Settings(BaseSettings):
 
     @field_validator("STORAGE_BACKEND")
     @classmethod
-    def _normalise_storage_backend(cls, value: str) -> str:
+    def _normalise_storage_backend(cls, value):
         v = value.strip().lower()
         if v not in ("auto", "local", "supabase"):
             raise ValueError("STORAGE_BACKEND must be one of: auto, local, supabase")
         return v
+
+    @field_validator("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", mode="before")
+    @classmethod
+    def _clean_credential(cls, value):
+        """
+        Tidy a credential pasted out of the Supabase dashboard.
+
+        A trailing newline is easy to pick up while copying a key, and httpx
+        then refuses to send the request at all ("Illegal header value"), so
+        the failure never reaches Supabase. Wrapping quotes also survive a copy
+        from some shells, turning a valid key into a 403. Strip both.
+        """
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in "\"'":
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+
+    @model_validator(mode="after")
+    def _require_usable_supabase_credentials(self):
+        """
+        Refuse to start when the Supabase backend is selected without usable
+        credentials.
+
+        This runs in EVERY environment, not just production. Previously the
+        check lived inside the production-only guard, so in development a
+        missing key surfaced much later as a 400 from Supabase's storage API
+        ("headers must have required property 'authorization'") — which reads
+        like a bug in the request rather than a missing environment variable.
+        """
+        if self.storage_backend != "supabase":
+            return self
+
+        problems = []
+        for name, value in (
+            ("SUPABASE_URL", self.SUPABASE_URL),
+            ("SUPABASE_SERVICE_ROLE_KEY", self.SUPABASE_SERVICE_ROLE_KEY),
+        ):
+            if not value:
+                problems.append(f"{name} is empty")
+            elif _is_placeholder(value):
+                problems.append(f"{name} still holds the template placeholder")
+        if problems:
+            raise ValueError(
+                f"STORAGE_BACKEND resolved to 'supabase' but {' and '.join(problems)}. "
+                "Set them as environment variables — Render -> Environment, your shell, or "
+                "backend/.env.local (gitignored) — using Supabase -> Project Settings -> API. "
+                "Never hardcode the service_role key: it bypasses RLS."
+            )
+        return self
+
 
     @model_validator(mode="after")
     def _reject_insecure_production_settings(self):
@@ -158,26 +223,9 @@ class Settings(BaseSettings):
                 "(Supabase -> Project Settings -> API), or set STORAGE_BACKEND=supabase "
                 "if you have attached a persistent disk."
             )
-        # An explicit STORAGE_BACKEND=supabase must not be able to bypass the
-        # credential check, otherwise uploads would fail on the first request.
-        if self.storage_backend == "supabase" and not (
-            self.SUPABASE_URL and self.SUPABASE_SERVICE_ROLE_KEY
-        ):
-            missing = [
-                name
-                for name, value in (
-                    ("SUPABASE_URL", self.SUPABASE_URL),
-                    ("SUPABASE_SERVICE_ROLE_KEY", self.SUPABASE_SERVICE_ROLE_KEY),
-                )
-                if not value
-            ]
-            raise ValueError(
-                f"STORAGE_BACKEND=supabase but {' and '.join(missing)} "
-                f"{'is' if len(missing) == 1 else 'are'} empty. Copy the project URL and the "
-                "service role key from Supabase -> Project Settings -> API. The service role "
-                "key is required to upload and to sign private capture URLs; never expose it "
-                "to the frontend."
-            )
+        # An explicit STORAGE_BACKEND=supabase with unusable credentials is
+        # rejected by _require_usable_supabase_credentials above, which also
+        # covers development.
         return self
 
     @property

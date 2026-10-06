@@ -135,15 +135,29 @@ class SupabaseStorage:
     """Talks to Supabase Storage's REST API."""
 
     def __init__(self, url: str, service_role_key: str) -> None:
+        if not url or not service_role_key:
+            # config.py already rejects this, but get_storage() is reachable
+            # from tests and scripts, and an empty key otherwise produces a
+            # baffling LocalProtocolError deep inside httpx.
+            raise StorageError(
+                "Supabase storage requires both SUPABASE_URL and "
+                f"SUPABASE_SERVICE_ROLE_KEY (url set: {bool(url)}, key set: "
+                f"{bool(service_role_key)}). Set them as environment variables."
+            )
         self._base = url.rstrip("/")
         self._key = service_role_key
+        # Kept as an explicit attribute and passed on every request rather than
+        # relying on client defaults alone: a missing Authorization header is
+        # the failure Supabase reports as a 400 ("headers must have required
+        # property 'authorization'"), which looks like a request bug.
+        self._auth = {
+            "Authorization": f"Bearer {service_role_key}",
+            "apikey": service_role_key,
+        }
         self._client = httpx.AsyncClient(
             base_url=self._base,
             timeout=httpx.Timeout(30.0, connect=10.0),
-            headers={
-                "Authorization": f"Bearer {service_role_key}",
-                "apikey": service_role_key,
-            },
+            headers=dict(self._auth),
         )
 
     async def aclose(self) -> None:
@@ -171,31 +185,34 @@ class SupabaseStorage:
                 "file_size_limit": spec["max_bytes"],
                 "allowed_mime_types": sorted(spec["allowed_types"]),
             }
-            resp = await self._client.post("/storage/v1/bucket", json=payload)
+            resp = await self._client.post(
+                "/storage/v1/bucket", json=payload, headers=self._auth
+            )
             if resp.status_code in (200, 201):
                 created.append(bucket_id)
                 logger.info("Created storage bucket %s (public=%s)", bucket_id, spec["public"])
-            elif resp.status_code in (400, 409):
-                # Already exists, or the name is taken by a bucket we do not own.
-                body = resp.text.lower()
-                if "already" in body or "exists" in body:
-                    logger.debug("Storage bucket %s already exists", bucket_id)
-                    updated = await self._client.put(f"/storage/v1/bucket/{bucket_id}", json=payload)
-                    if updated.status_code != 200:
-                        logger.warning(
-                            "Could not update bucket %s (HTTP %s): %s",
-                            bucket_id, updated.status_code, updated.text[:200],
-                        )
-                else:
-                    logger.warning(
-                        "Could not create bucket %s (HTTP %s): %s",
-                        bucket_id, resp.status_code, resp.text[:200],
-                    )
-            else:
-                logger.warning(
-                    "Could not create bucket %s (HTTP %s): %s",
-                    bucket_id, resp.status_code, resp.text[:200],
+                continue
+
+            body = resp.text.lower()
+            if resp.status_code in (400, 409) and ("already" in body or "exists" in body):
+                logger.debug("Storage bucket %s already exists", bucket_id)
+                updated = await self._client.put(
+                    f"/storage/v1/bucket/{bucket_id}", json=payload, headers=self._auth
                 )
+                if updated.status_code != 200:
+                    logger.error(
+                        "Could not update bucket %s (HTTP %s): %s",
+                        bucket_id, updated.status_code, updated.text[:200],
+                    )
+                continue
+
+            # Anything else is a genuine failure — a wrong service_role key
+            # lands here. Log it at ERROR so it cannot be mistaken for the
+            # harmless "already exists" case during a normal startup.
+            logger.error(
+                "Could not create bucket %s (HTTP %s): %s",
+                bucket_id, resp.status_code, resp.text[:200],
+            )
         return created
 
     def _bucket_id(self, logical: str) -> str:
@@ -223,6 +240,7 @@ class SupabaseStorage:
             f"/storage/v1/object/{bucket}/{quote(key)}",
             content=data,
             headers={
+                **self._auth,
                 "Content-Type": content_type,
                 "x-upsert": "true",       # replace instead of 409 on re-upload
                 "Cache-Control": "3600",
@@ -242,7 +260,9 @@ class SupabaseStorage:
     async def delete(self, logical: str, key: str) -> bool:
         key = _safe_key(key)
         bucket = self._bucket_id(logical)
-        resp = await self._client.delete(f"/storage/v1/object/{bucket}/{quote(key)}")
+        resp = await self._client.delete(
+            f"/storage/v1/object/{bucket}/{quote(key)}", headers=self._auth
+        )
         if resp.status_code in (200, 204):
             return True
         if resp.status_code == 404:
@@ -264,6 +284,7 @@ class SupabaseStorage:
         resp = await self._client.post(
             f"/storage/v1/object/sign/{bucket}/{quote(key)}",
             json={"expiresIn": settings.SIGNED_URL_TTL_SECONDS},
+            headers=self._auth,
         )
         if resp.status_code not in (200, 201):
             logger.warning(
@@ -278,7 +299,12 @@ class SupabaseStorage:
         signed = payload.get("signedURL") or payload.get("signedUrl") or payload.get("url")
         if not signed:
             return None
-        return f"{self._base}{signed}" if signed.startswith("/") else signed
+        if not signed.startswith("/"):
+            return signed
+        # storage-api returns the path relative to the storage ROOT
+        # ("/object/sign/..."), but the public host serves it under
+        # /storage/v1. Without this prefix every private read 404s.
+        return f"{self._base}/storage/v1{signed}"
 
 
 # ── Local backend ─────────────────────────────────────────────────────────────

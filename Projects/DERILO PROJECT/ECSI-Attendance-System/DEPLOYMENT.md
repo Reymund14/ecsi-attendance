@@ -201,6 +201,20 @@ credentials, no network calls. `ENVIRONMENT=production` **refuses to start**
 with local storage, so a misconfigured deploy fails loudly instead of silently
 losing every upload.
 
+To exercise the real buckets on a laptop, put the credentials in
+`backend/.env.local` (gitignored — never in `.env`, which *is* meant to be
+committed for shared defaults):
+
+```
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service_role secret>
+STORAGE_BACKEND=supabase
+```
+
+Precedence is **real environment variables > `.env.local` > `.env`**, so a shell
+or Render value always wins over a file. Values are trimmed of surrounding
+whitespace and quotes, so a key pasted with a trailing newline still works.
+
 ---
 
 ## 3. Render (backend API)
@@ -403,7 +417,12 @@ project before you assume the live site works.
 | Render build fails on `deepface`/`opencv` | Check Python is set to 3.11 and inspect Render build logs for dependency or resource failures. |
 | `RuntimeError: DATABASE_URL must point at PostgreSQL` | `ENVIRONMENT=production` with a SQLite URL. Set the Supabase URL. |
 | `STORAGE_BACKEND resolved to 'local'` at boot | Production needs durable storage: set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, or `STORAGE_BACKEND=supabase`. |
-| `STORAGE_BACKEND=supabase but SUPABASE_URL ... empty` | One of the two Supabase credentials is missing in Render's Environment tab (§2b). |
+| `STORAGE_BACKEND=supabase but SUPABASE_URL ... empty` | One of the two Supabase credentials is missing in Render's Environment tab (§2b). Names are case-sensitive. |
+| App refuses to start: `SUPABASE_SERVICE_ROLE_KEY still holds the template placeholder` | You copied `.env.production` without filling it in. `STORAGE_BACKEND=supabase` with an unusable key now fails at boot instead of 400ing later on uploads. |
+| Supabase replies `400 headers must have required property 'authorization'` | The request went out **without** an `Authorization` header — it did not come from `services/storage.py`, which sends one on every call. Look for a stray script or `curl` against `/storage/v1/bucket`. |
+| Supabase replies `403 Invalid Compact JWS` | The key reached Supabase but is malformed — usually wrapping quotes. Values are now stripped automatically; a rotated key is the other cause. |
+| `httpx.LocalProtocolError: Illegal header value` | The key had a trailing newline or space. Now trimmed by `config.py`; if it persists, re-copy the secret. |
+| Private capture / proof / enrollment image 404s after upload | Fixed: signed URLs need the `/storage/v1` prefix. Redeploy if the build predates that fix in `services/storage.py`. |
 | Avatar upload returns 400 "not a valid JPEG, PNG or WEBP" | Bytes are validated by magic number; make sure the client sends the real image, not a placeholder or base64 data URI string. |
 | Avatar 404s after a successful upload | `profile-photos` was created private. It must be a **public** bucket (§2b). |
 | `/capture` returns 410 | The record has a key but no object in the bucket — nothing wrote a frame yet (§6). |
