@@ -153,6 +153,34 @@ With storage configured, the seeder also uploads a small placeholder JPEG for
 each seeded intruder capture so the signed-URL endpoints return real images
 instead of `410`. `--reset` clears the database and rewrites the placeholders.
 
+### Faculty advisory sections (required)
+
+A faculty member's **advisory section is stored in `users.section`** — the same
+column a student's class goes in. The API scopes faculty access by it
+(`GET /attendance`, `GET /excuses`, `GET /evaluations/summary`), so **a faculty
+account with a NULL advisory section sees an empty dashboard and gets HTTP 400
+on Attendance Evaluation** rather than anyone else's students.
+
+Set it under **Users → Add/Edit User → Advisory Section**. When you create
+faculty accounts, do not leave that field blank.
+
+### Attendance Evaluation data
+
+`GET /api/v1/evaluations/summary` computes every number on the faculty
+Attendance Evaluation page from `attendance_records` and `excuse_requests`, and
+`PUT /api/v1/evaluations/{student_id}` persists the adviser's standing and
+remarks to the new `attendance_evaluations` table (created automatically at
+startup by `init_db`).
+
+Two things worth knowing:
+
+- The attendance-rate divisor is the **count of weekdays in the evaluation
+  window** (30 days trailing by default). There is no school-calendar table, so
+  public holidays are counted as school days and will read slightly low.
+- Only `verified` and `manual_override` check-ins count as present. A
+  `proxy_anomaly` is someone else's card, and `pending_review` is unconfirmed,
+  so neither counts toward the rate.
+
 ---
 
 ## 2b. Supabase Storage (profile photos + audit captures)

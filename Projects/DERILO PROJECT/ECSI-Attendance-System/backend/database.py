@@ -58,7 +58,7 @@ async def get_db():
 # ── Init (called on startup) ──────────────────────────────────────────────────
 async def init_db() -> None:
     """Create all tables defined via the ORM if they do not already exist."""
-    from models import user, attendance, notification, excuse  # noqa: F401
+    from models import user, attendance, notification, excuse, evaluation  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Add profile fields to databases created before these fields existed.

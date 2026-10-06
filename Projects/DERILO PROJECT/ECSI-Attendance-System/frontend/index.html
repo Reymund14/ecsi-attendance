@@ -365,6 +365,11 @@ let backendUsers = [];
 let backendAttendance = [];
 let backendNotifications = [];
 let backendExcuses = [];
+// Live notification settings, seeded to mirror the backend's DEFAULT_SETTINGS so
+// the first paint can never show the demo providers ("Semaphore"/"Gmail SMTP") or
+// pre-enabled channels before the server responds.
+let notifSettings = {sms_enabled:false,email_enabled:false,sms_provider:'Not configured',email_provider:'Not configured',recipients:{parents:true,admins:true,faculty:true},triggers:{proxy_alert:true,daily_summary:false,absence_3days:true,new_enrollment:true}};
+function notifCfg(){return demoMode?MOCK.notifSettings:notifSettings;}
 function appUsers(){return demoMode?MOCK.users:[...backendUsers.filter(u=>u.id!==currentUser?.id),...(currentUser?[currentUser]:[])];}
 function appAttendance(){return demoMode?MOCK.attendance:backendAttendance;}
 function appSections(){return demoMode?Object.keys(MOCK.sections):[...new Set(appUsers().map(u=>u.section).filter(Boolean))].sort();}
@@ -2567,10 +2572,10 @@ function _userFormHtml(u){
         </select>
       </div>
       <div id="uf-section-wrap">
-        <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Section</label>
+        <label id="uf-section-label" style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Section</label>
         <select id="uf-section" style="width:100%;box-sizing:border-box">
           <option value="">— Select section —</option>
-          ${sections.map(s=>`<option value="${s}" ${isEdit&&(u.section||u.department)===s?'selected':''}>${s}</option>`).join('')}
+          ${sections.map(s=>`<option value="${s}" ${isEdit&&u.section===s?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
       <div id="uf-dept-wrap" style="display:none">
@@ -2616,8 +2621,15 @@ function userFormRoleChanged(){
   const role=document.getElementById('uf-role')?.value;
   const secWrap=document.getElementById('uf-section-wrap');
   const deptWrap=document.getElementById('uf-dept-wrap');
-  if(role==='student'){if(secWrap)secWrap.style.display='';if(deptWrap)deptWrap.style.display='none';}
-  else{if(secWrap)secWrap.style.display='none';if(deptWrap)deptWrap.style.display='';}
+  const secLabel=document.getElementById('uf-section-label');
+  // A faculty member's advisory section lives in users.section too — that is the
+  // column the API scopes attendance and excuse requests by (routers/attendance.py
+  // and routers/excuses.py both filter on User.section == current_user.section).
+  // Hiding it for faculty left every UI-created adviser with a NULL section, which
+  // silently hid their class from them. Faculty therefore need BOTH fields.
+  if(secWrap)secWrap.style.display=role==='super_admin'?'none':'';
+  if(deptWrap)deptWrap.style.display=role==='student'?'none':'';
+  if(secLabel)secLabel.textContent=role==='faculty'?'Advisory Section':'Section';
 }
 
 function openUserModal(userId){
@@ -2655,7 +2667,7 @@ async function saveUser(userId){
   }
 
   if(!demoMode){
-    const payload={full_name:name,email:email||null,department:role==='student'?null:dept||null,section:role==='student'?section||null:null,phone:phone||null,address:address||null,parent_name:parentName||null,parent_contact:parentContact||null,status};
+    const payload={full_name:name,email:email||null,department:role==='student'?null:dept||null,section:role==='super_admin'?null:section||null,phone:phone||null,address:address||null,parent_name:parentName||null,parent_contact:parentContact||null,status};
     let response;
     if(userId) response=await apiFetch(`/users/${userId}`,{method:'PATCH',body:JSON.stringify(payload)});
     else {
@@ -2671,8 +2683,9 @@ async function saveUser(userId){
     if(u){
       u.full_name=name;u.role=role;u.email=email;u.phone=phone;
       u.parent_name=parentName;u.parent_contact=parentContact;u.address=address;u.status=status;
-      if(role==='student'){u.section=section;u.department='';}
-      else{u.department=dept;u.section='';}
+      if(role==='super_admin'){u.section='';u.department=dept;}
+      else if(role==='student'){u.section=section;u.department='';}
+      else{u.section=section;u.department=dept;}
     }
   } else {
     // CREATE
@@ -2680,8 +2693,8 @@ async function saveUser(userId){
     const newUser={id:newId,id_number:idNum,full_name:name,role,email,phone,
       parent_name:parentName,parent_contact:parentContact,address,status,
       has_rfid:false,has_face:false,rfid_uid:'',
-      section:role==='student'?section:'',
-      department:role!=='student'?dept:''};
+      section:role==='super_admin'?'':section,
+      department:role==='student'?'':dept};
     MOCK.users.push(newUser);
   }
   closeUserModal();
@@ -3587,7 +3600,7 @@ function setExcuseAlert(type,msg){
 function renderNotifications(el){
   // Mark all current user's system notifications as seen
   _markSystemNotificationsSeen();
-  const cfg=MOCK.notifSettings;
+  const cfg=notifCfg();
   el.innerHTML=`
     <div class="topbar">
       <span class="font-bold">Notification System</span>
@@ -3799,7 +3812,7 @@ function renderNotifications(el){
 async function loadBackendNotifications(){
   const [list,settings]=await Promise.all([apiFetch('/notifications/'),apiFetch('/notifications/settings')]);
   if(list?.ok){backendNotifications=await list.json();const log=document.getElementById('notif-log-list');if(log)log.innerHTML=renderNotifLog();if(currentPage==='notifications')_markSystemNotificationsSeen();else _updateNotifNavBadge();const counts=document.querySelectorAll('[data-notif-count]');if(counts[0])counts[0].textContent=backendNotifications.filter(n=>n.status==='stored'||n.status==='delivered').length;if(counts[1])counts[1].textContent=backendNotifications.filter(n=>n.status==='queued').length;}
-  if(settings?.ok){const saved=await settings.json();MOCK.notifSettings={...MOCK.notifSettings,...saved,recipients:{...MOCK.notifSettings.recipients,...saved.recipients},triggers:{...MOCK.notifSettings.triggers,...saved.triggers}};Object.entries(saved.recipients||{}).forEach(([k,v])=>{const el=document.getElementById('recv-'+k);if(el)el.checked=v;});Object.entries(saved.triggers||{}).forEach(([k,v])=>{const el=document.getElementById('trig-'+k);if(el)el.checked=v;});['sms','email'].forEach(ch=>{const on=!!saved[ch+'_enabled'];const el=document.getElementById(ch+'-toggle');if(el){el.style.background=on?'#41A638':'#D1D5DB';el.firstElementChild.style[on?'right':'left']='2px';el.firstElementChild.style[on?'left':'right']='';}});}
+  if(settings?.ok){const saved=await settings.json();const target=notifCfg();Object.assign(target,saved);target.recipients={...target.recipients,...(saved.recipients||{})};target.triggers={...target.triggers,...(saved.triggers||{})};Object.entries(saved.recipients||{}).forEach(([k,v])=>{const el=document.getElementById('recv-'+k);if(el)el.checked=v;});Object.entries(saved.triggers||{}).forEach(([k,v])=>{const el=document.getElementById('trig-'+k);if(el)el.checked=v;});['sms','email'].forEach(ch=>{const on=!!saved[ch+'_enabled'];const el=document.getElementById(ch+'-toggle');if(el){el.style.background=on?'#41A638':'#D1D5DB';el.firstElementChild.style[on?'right':'left']='2px';el.firstElementChild.style[on?'left':'right']='';}});}
 }
 function renderNotifLog(){
   // Parents only see their targeted system notifs + broadcasts; others see all
@@ -3840,16 +3853,18 @@ function renderNotifLog(){
 }
 
 async function setNotifSetting(group,key,value){
-  MOCK.notifSettings[group][key]=value;
+  const cfg=notifCfg();
+  cfg[group][key]=value;
   if(!demoMode){
-    const r=await apiFetch('/notifications/settings',{method:'PUT',body:JSON.stringify({settings:MOCK.notifSettings})});
+    const r=await apiFetch('/notifications/settings',{method:'PUT',body:JSON.stringify({settings:notifSettings})});
     if(!r?.ok) alert('Could not save notification settings.');
   }
 }
 function toggleNotifChannel(ch){
-  MOCK.notifSettings[ch+'_enabled']=!MOCK.notifSettings[ch+'_enabled'];
-  if(!demoMode) apiFetch('/notifications/settings',{method:'PUT',body:JSON.stringify({settings:MOCK.notifSettings})});
-  const on=MOCK.notifSettings[ch+'_enabled'];
+  const cfg=notifCfg();
+  cfg[ch+'_enabled']=!cfg[ch+'_enabled'];
+  if(!demoMode) apiFetch('/notifications/settings',{method:'PUT',body:JSON.stringify({settings:notifSettings})});
+  const on=cfg[ch+'_enabled'];
   const el=document.getElementById(ch+'-toggle');
   if(el){el.style.background=on?'#41A638':'#D1D5DB';el.firstElementChild.style[on?'right':'left']='2px';el.firstElementChild.style[on?'left':'right']='';}
 }
@@ -5029,28 +5044,93 @@ function roleBadge(r){
 // ATTENDANCE EVALUATION (Faculty)
 // ═══════════════════════════════════════════════════════════
 
-// In-memory evaluation records
-const _evalRecords = {}; // student_id → {status, note, savedAt}
+// Server-backed evaluation state. Rates, day counts and remarks all come from
+// GET /evaluations/summary, which derives them from attendance_records and
+// excuse_requests. The demo path below is the only place numbers are invented.
+const _evalState={loading:false,loaded:false,section:null,dateFrom:null,dateTo:null,schoolDays:0,rows:[],error:''};
 
-function _evalGetStudents(){
-  // Faculty sees students in their advisory section
-  // Maria Santos (FAC001) advises Grade 10-A; fallback: all students
-  const facSection = Object.entries(appSectionsMap()).find(([,v])=>v.adviser===currentUser?.full_name);
-  const sectionName = facSection ? facSection[0] : null;
-  return appUsers().filter(u => u.role==='student' && u.status==='active' &&
-    (!sectionName || u.section===sectionName));
+// Demo-only fallback (backend unreachable). Mirrors the old mock maths so the
+// offline preview still renders; never used against a live API.
+function _evalLoadMock(){
+  const facSection=Object.entries(appSectionsMap()).find(([,v])=>v.adviser===currentUser?.full_name);
+  const sectionName=facSection?facSection[0]:null;
+  const students=appUsers().filter(u=>u.role==='student'&&u.status==='active'&&(!sectionName||u.section===sectionName));
+  const totalDays=20;
+  _evalState.rows=students.map(s=>{
+    const recs=[...appAttendance(),...feedItems].filter(a=>a.id_number===s.id_number);
+    const timeIns=recs.filter(r=>r.check_type==='time_in');
+    const daysPresent=new Set(timeIns.map(r=>r.timestamp?.slice(0,10))).size;
+    const verified=recs.filter(r=>r.status==='verified'||r.status==='manual_override').length;
+    const proxy=recs.filter(r=>r.status==='proxy_anomaly').length;
+    const excused=appExcuseRequests().filter(e=>e.student_id===s.id&&e.status==='approved').length;
+    return {s,stats:{daysPresent,totalDays,verified,proxy,excused,pending:0,rate:Math.min(100,Math.round((daysPresent/totalDays)*100))},ev:null};
+  });
+  _evalState.section=sectionName;
+  _evalState.schoolDays=totalDays;
+  _evalState.loaded=true;
+  _evalState.error='';
 }
 
-function _evalComputeRate(student){
-  const totalDays = 20; // estimated school days in mock
-  const recs = [...appAttendance(), ...feedItems].filter(a => a.id_number === student.id_number);
-  const timeIns = recs.filter(r => r.check_type==='time_in');
-  const daysPresent = new Set(timeIns.map(r => r.timestamp?.slice(0,10))).size;
-  const verified = recs.filter(r => r.status==='verified' || r.status==='manual_override').length;
-  const proxy = recs.filter(r => r.status==='proxy_anomaly').length;
-  const excused = appExcuseRequests().filter(e => e.student_id===student.id && e.status==='approved').length;
-  const rate = Math.min(100, Math.round((daysPresent / totalDays) * 100));
-  return {daysPresent, totalDays, verified, proxy, excused, rate};
+async function _evalLoad(){
+  if(demoMode){_evalLoadMock();return;}
+  _evalState.loading=true;_evalState.error='';
+  const r=await apiFetch('/evaluations/summary');
+  if(!r){_evalState.loading=false;_evalState.rows=[];_evalState.error='Could not reach the server. Check your connection and try again.';return;}
+  if(!r.ok){
+    let detail='';
+    try{detail=(await r.json()).detail||'';}catch{}
+    _evalState.loading=false;_evalState.rows=[];
+    _evalState.error=detail||`Could not load evaluations (HTTP ${r.status}).`;
+    return;
+  }
+  const data=await r.json();
+  _evalState.section=data.section;
+  _evalState.dateFrom=data.date_from;
+  _evalState.dateTo=data.date_to;
+  _evalState.schoolDays=data.school_days;
+  _evalState.loaded=true;
+  _evalState.error='';
+  _evalState.rows=data.students.map(stu=>({
+    s:{id:stu.student_id,full_name:stu.full_name,id_number:stu.id_number,section:stu.section},
+    stats:{daysPresent:stu.days_present,totalDays:stu.school_days,verified:stu.verified,
+           proxy:stu.proxy_anomaly,excused:stu.excused,pending:stu.pending_review,rate:stu.rate},
+    ev:stu.standing?{status:stu.standing,note:stu.note||'',savedAt:stu.evaluated_at}:null
+  }));
+  _evalState.loading=false;
+}
+
+async function _evalSave(studentId){
+  const statusEl=document.getElementById('eval-status-'+studentId);
+  const noteEl=document.getElementById('eval-note-'+studentId);
+  const btnEl=document.getElementById('eval-btn-'+studentId);
+  const tagEl=document.getElementById('eval-tag-'+studentId);
+  if(!statusEl) return;
+  const standing=statusEl.value;
+  const note=noteEl?.value.trim()||'';
+  if(!standing){alert('Please choose an evaluation status first.');return;}
+
+  if(demoMode){
+    const row=_evalState.rows.find(r=>r.s.id===studentId);
+    if(row) row.ev={status:standing,note,savedAt:new Date().toISOString()};
+  }else{
+    if(btnEl){btnEl.disabled=true;btnEl.textContent='…';}
+    const r=await apiFetch('/evaluations/'+encodeURIComponent(studentId),{
+      method:'PUT',
+      body:JSON.stringify({standing,note,date_from:_evalState.dateFrom,date_to:_evalState.dateTo})
+    });
+    if(btnEl){btnEl.disabled=false;}
+    if(!r?.ok){
+      let msg='Could not save evaluation.';
+      try{msg=(await r.json()).detail||msg;}catch{}
+      alert(msg);
+      if(btnEl){btnEl.textContent='Save';}
+      return;
+    }
+    const row=_evalState.rows.find(r=>r.s.id===studentId);
+    if(row) row.ev={status:standing,note,savedAt:new Date().toISOString()};
+  }
+  if(btnEl){ btnEl.textContent='✓ Saved'; btnEl.style.background='#16A34A'; btnEl.style.color='#fff'; setTimeout(()=>{btnEl.textContent='Save';btnEl.style.background='';btnEl.style.color='';},2000); }
+  if(tagEl){ tagEl.textContent=standing; tagEl.style.display=''; }
 }
 
 function _evalRating(rate){
@@ -5060,29 +5140,27 @@ function _evalRating(rate){
   return {label:'Critical',color:'#DC2626',bg:'#FEE2E2',icon:'🔴'};
 }
 
-function _evalSave(studentId){
-  const statusEl = document.getElementById('eval-status-'+studentId);
-  const noteEl   = document.getElementById('eval-note-'+studentId);
-  const btnEl    = document.getElementById('eval-btn-'+studentId);
-  const tagEl    = document.getElementById('eval-tag-'+studentId);
-  if(!statusEl) return;
-  _evalRecords[studentId] = {
-    status: statusEl.value,
-    note:   noteEl?.value.trim() || '',
-    savedAt: new Date().toISOString(),
-  };
-  if(btnEl){ btnEl.textContent='✓ Saved'; btnEl.style.background='#16A34A'; btnEl.style.color='#fff'; setTimeout(()=>{btnEl.textContent='Save';btnEl.style.background='';btnEl.style.color='';},2000); }
-  if(tagEl){ tagEl.textContent=statusEl.value; tagEl.style.display=''; }
-}
+async function renderAttendanceEval(el){
+  await _evalLoad();
+  if(_evalState.error){
+    el.innerHTML=`
+      <div class="topbar"><span class="font-bold">📝 Attendance Evaluation</span></div>
+      <div class="page-content"><div class="card" style="padding:32px;text-align:center;color:#6B7280;font-size:13px">
+        <div style="font-size:26px;margin-bottom:10px">⚠️</div>
+        <div style="font-weight:700;color:#374151;margin-bottom:6px">Attendance data unavailable</div>
+        <div>${_evalState.error}</div>
+      </div></div>`;
+    return;
+  }
+  const rows=[..._evalState.rows];
+  const sectionName=_evalState.section||'All Students';
+  // Live data carries no department label; the demo map still has one.
+  let dept='';
+  if(demoMode){
+    const f=Object.entries(appSectionsMap()).find(([,v])=>v.adviser===currentUser?.full_name);
+    dept=f?f[1].department:'';
+  }
 
-function renderAttendanceEval(el){
-  const students = _evalGetStudents();
-  const facSection = Object.entries(appSectionsMap()).find(([,v])=>v.adviser===currentUser?.full_name);
-  const sectionName = facSection ? facSection[0] : 'All Students';
-  const dept = facSection ? facSection[1].department : '';
-
-  // Compute all stats upfront
-  const rows = students.map(s => ({s, stats:_evalComputeRate(s), ev:_evalRecords[s.id]||null}));
   const excellent = rows.filter(r=>r.stats.rate>=90).length;
   const good      = rows.filter(r=>r.stats.rate>=80&&r.stats.rate<90).length;
   const atRisk    = rows.filter(r=>r.stats.rate>=75&&r.stats.rate<80).length;
@@ -5096,6 +5174,7 @@ function renderAttendanceEval(el){
       <div>
         <span class="font-bold">📝 Attendance Evaluation</span>
         <span style="font-size:11px;color:#6B7280;margin-left:10px">${sectionName}${dept?' · '+dept:''}</span>
+        ${!demoMode&&_evalState.dateFrom?`<div style="font-size:10px;color:#9CA3AF;margin-top:3px">Evaluated ${_evalState.dateFrom} → ${_evalState.dateTo} · ${_evalState.schoolDays} school days</div>`:''}
       </div>
       <button class="btn btn-primary" style="font-size:12px" onclick="renderAttendanceEval(document.getElementById('page-attendance-eval'))">↻ Refresh</button>
     </div>
@@ -5122,7 +5201,7 @@ function renderAttendanceEval(el){
         <div style="padding:14px 20px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center">
           <div>
             <div style="font-weight:700;font-size:14px">Student Attendance Evaluation</div>
-            <div style="font-size:11px;color:#6B7280">${students.length} student${students.length!==1?'s':''} · sorted by attendance rate (lowest first)</div>
+            <div style="font-size:11px;color:#6B7280">${rows.length} student${rows.length!==1?'s':''} · sorted by attendance rate (lowest first)</div>
           </div>
           <div style="display:flex;gap:6px;font-size:10px;font-weight:700">
             <span style="padding:3px 8px;border-radius:99px;background:#DCFCE7;color:#16A34A">🟢 Excellent</span>
@@ -5201,7 +5280,7 @@ function renderAttendanceEval(el){
         <!-- Summary Footer -->
         <div style="padding:12px 20px;background:#F9FAFB;border-top:1px solid #E5E7EB;display:flex;gap:16px;font-size:11px;color:#6B7280;flex-wrap:wrap">
           <span>📊 Class Average: <strong style="color:#374151">${rows.length?Math.round(rows.reduce((s,r)=>s+r.stats.rate,0)/rows.length):0}%</strong></span>
-          <span>✏️ Evaluations saved: <strong style="color:#374151">${Object.keys(_evalRecords).length}</strong></span>
+          <span>✏️ Evaluations saved: <strong style="color:#374151">${rows.filter(r=>r.ev).length}</strong></span>
           <span>⚠️ Needing attention: <strong style="color:#DC2626">${atRisk+critical}</strong></span>
           <span style="margin-left:auto;color:#9CA3AF">Last updated: ${new Date().toLocaleTimeString()}</span>
         </div>
