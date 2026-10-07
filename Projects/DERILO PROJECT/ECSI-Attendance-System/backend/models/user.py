@@ -97,11 +97,21 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    # lazy="selectin": AsyncSession cannot emit lazy loads (MissingGreenlet),
+    # so these must be eager-loaded on every fetch, including db.refresh().
     rfid_card: Mapped[Optional["RFIDCard"]] = relationship(
-        "RFIDCard", back_populates="user", uselist=False, cascade="all, delete-orphan"
+        "RFIDCard",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
     face_embedding: Mapped[Optional["FaceEmbedding"]] = relationship(
-        "FaceEmbedding", back_populates="user", uselist=False, cascade="all, delete-orphan"
+        "FaceEmbedding",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
     # Explicit foreign_keys to resolve ambiguity with override_by FK
     attendance_records: Mapped[List["AttendanceRecord"]] = relationship(  # type: ignore[name-defined]
