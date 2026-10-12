@@ -99,6 +99,29 @@ class FaceEmbeddingOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FaceEnrollmentOut(BaseModel):
+    """
+    Result of a face-enrollment attempt.
+
+    When the biometric pipeline is unavailable (DeepFace/ArcFace not installed,
+    or FACE_PIPELINE_ENABLED=false) the reference photo is still stored, but no
+    template is generated: `embedding_saved` is False and the embedding fields
+    are None. Callers can retry enrollment later once the pipeline is restored.
+    """
+
+    embedding_saved: bool
+    face_photo_url: Optional[str] = None
+
+    # Populated only when an embedding was actually generated and persisted.
+    id: Optional[uuid.UUID] = None
+    model_name: Optional[str] = None
+    source_frame_count: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 # ── Auth Schemas ──────────────────────────────────────────────────────────────
 class LoginRequest(BaseModel):
     id_number: str
