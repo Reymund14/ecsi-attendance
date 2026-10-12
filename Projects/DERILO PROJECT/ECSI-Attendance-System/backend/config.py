@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     FACE_DETECTOR: str = "mtcnn"      # "mtcnn" | "retinaface" | "opencv"
     COSINE_DISTANCE_THRESHOLD: float = 0.40   # <= 0.40 → MATCH
     EMBEDDING_DIMENSIONS: int = 512
+    # Master switch for the DeepFace/TensorFlow pipeline. Set to false to skip
+    # importing the heavy AI stack entirely — startup stays fast and the
+    # TensorFlow/CUDA log noise disappears. Face enrollment returns 503 and
+    # RFID taps are still captured and recorded as PENDING_REVIEW for manual
+    # review (see services/attendance_service.py). The packages remain
+    # installed; this only controls whether they are loaded at runtime.
+    FACE_PIPELINE_ENABLED: bool = True
 
     # ── RFID ─────────────────────────────────────────────────────
     RFID_PORT: str = "/dev/ttyUSB0"   # Serial port for UART readers; ignored for USB-HID

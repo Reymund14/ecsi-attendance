@@ -87,6 +87,13 @@ services:
       - key: CORS_ORIGIN_REGEX
         value: ^https://[a-z0-9-]+\.vercel\.app$
 
+      # Master switch for the DeepFace/TensorFlow pipeline. Set to "false" to
+      # skip importing the heavy AI stack at runtime (faster startup, no
+      # TensorFlow/CUDA log spam). Face enrollment then returns 503 and RFID
+      # taps are still captured and queued as PENDING_REVIEW.
+      - key: FACE_PIPELINE_ENABLED
+        value: "true"
+
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "480"
       - key: DB_POOL_SIZE

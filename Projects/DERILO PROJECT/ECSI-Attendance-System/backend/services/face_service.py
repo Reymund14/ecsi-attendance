@@ -8,6 +8,8 @@ import io
 import logging
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from config import settings
+
 if TYPE_CHECKING:  # numpy only needed for type hints
     import numpy as np
 
@@ -59,6 +61,16 @@ def _deepface():
     """
     global _DEEPFACE, _DEEPFACE_IMPORT_FAILED
     if _DEEPFACE is None and not _DEEPFACE_IMPORT_FAILED:
+        # Honour the operator switch first: when disabled we must not touch
+        # TensorFlow at all, otherwise the import banner and CUDA probes fire
+        # regardless of host hardware.
+        if not settings.FACE_PIPELINE_ENABLED:
+            _DEEPFACE_IMPORT_FAILED = True
+            logger.info(
+                "FACE_PIPELINE_ENABLED=false — skipping DeepFace/TensorFlow import; "
+                "face verification is unavailable on this instance."
+            )
+            return None
         try:
             from deepface import DeepFace
             _DEEPFACE = DeepFace
