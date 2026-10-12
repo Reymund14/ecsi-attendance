@@ -25,7 +25,7 @@ from models.user import RFIDCard, FaceEmbedding, User
 from schemas.attendance import WSAttendanceEvent, WSAlertEvent
 from services import storage
 from services.camera_service import camera_service
-from services.face_service import FaceService
+from services.face_service import FaceService, face_pipeline_available
 from websocket.manager import ws_manager
 
 from sqlalchemy import select
@@ -76,39 +76,86 @@ class AttendanceService:
 
             if frame_bytes is None:
                 logger.error("Camera unavailable — recording as PENDING_REVIEW.")
+                # Even without a verifiable JPEG, keep the raw frame if one was
+                # captured so the attempt still has an image on record.
+                captured_path = await self._save_frame(
+                    raw_frame=raw_frame,
+                    user_id=str(user.id),
+                    category="unverified",
+                )
                 await self._save_record(
                     db, user, card_uid, terminal_id,
                     status=AttendanceStatus.PENDING_REVIEW,
                     cosine_distance=None,
-                    captured_path=None,
-                    raw_frame=None,
+                    captured_path=captured_path,
+                    raw_frame=raw_frame,
                 )
+                await db.commit()
                 return
 
             # ── Step 3: AI Face Verification ──────────────────────────────
             face_embedding = user.face_embedding
 
-            if face_embedding is None:
-                logger.warning("User %s has no face embedding — marking PENDING_REVIEW.", user.id_number)
+            # When verification cannot run — no face template on file, or the
+            # biometric pipeline is missing (e.g. DeepFace is not installed) —
+            # we still persist the frame we just captured. The tap is recorded
+            # for manual review instead of being dropped, and the evidence
+            # survives in the private audit bucket.
+            if face_embedding is None or not face_pipeline_available():
+                if face_embedding is None:
+                    reason = "no face template enrolled"
+                else:
+                    reason = "face verification unavailable (DeepFace not installed)"
+                logger.warning(
+                    "User %s — %s; saving capture as PENDING_REVIEW.", user.id_number, reason
+                )
+                captured_path = await self._save_frame(
+                    raw_frame=raw_frame,
+                    user_id=str(user.id),
+                    category="unverified",
+                )
                 await self._save_record(
                     db, user, card_uid, terminal_id,
                     status=AttendanceStatus.PENDING_REVIEW,
                     cosine_distance=None,
-                    captured_path=None,
-                    raw_frame=None,
+                    captured_path=captured_path,
+                    raw_frame=raw_frame,
                 )
+                await db.commit()
                 return
 
-            is_match, cosine_distance = await face_service.verify(
-                live_frame_bytes=frame_bytes,
-                stored_embedding=face_embedding.embedding_vector,
-            )
+            try:
+                is_match, cosine_distance = await face_service.verify(
+                    live_frame_bytes=frame_bytes,
+                    stored_embedding=face_embedding.embedding_vector,
+                )
+            except Exception as exc:
+                # A failure inside the CV stack must not discard the capture:
+                # keep the evidence and defer to manual review.
+                logger.error(
+                    "Face verification failed for user %s (%s) — saving capture as PENDING_REVIEW.",
+                    user.id_number, exc,
+                )
+                captured_path = await self._save_frame(
+                    raw_frame=raw_frame,
+                    user_id=str(user.id),
+                    category="unverified",
+                )
+                await self._save_record(
+                    db, user, card_uid, terminal_id,
+                    status=AttendanceStatus.PENDING_REVIEW,
+                    cosine_distance=None,
+                    captured_path=captured_path,
+                    raw_frame=raw_frame,
+                )
+                await db.commit()
+                return
 
             # ── Step 4: Save captured frame ────────────────────────────────
             captured_path = await self._save_frame(
                 raw_frame=raw_frame,
                 user_id=str(user.id),
-                is_proxy=not is_match,
+                category="proxy" if not is_match else "verified",
             )
 
             # ── Step 5a: MATCH — Verified attendance ───────────────────────
@@ -171,17 +218,22 @@ class AttendanceService:
         await db.refresh(record)
         return record
 
-    async def _save_frame(self, raw_frame: np.ndarray, user_id: str, is_proxy: bool) -> str | None:
-        """Encode and persist a capture frame. Returns a storage KEY, not a path."""
+    async def _save_frame(self, raw_frame: np.ndarray, user_id: str, category: str = "verified") -> str | None:
+        """
+        Encode and persist a capture frame. Returns a storage KEY, not a path.
+
+        `category` names the private-bucket subfolder: "verified" for a matched
+        tap, "proxy" for a flagged mismatch, and "unverified" when verification
+        could not run (no template, missing DeepFace, or a pipeline error).
+        """
         if raw_frame is None:
             return None
         try:
-            subdir = "proxy" if is_proxy else "verified"
             filename = f"{user_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
             ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
             if not ok:
                 raise RuntimeError("cv2.imencode returned False")
-            return await storage.save_capture(subdir, filename, buf.tobytes(), "image/jpeg")
+            return await storage.save_capture(category, filename, buf.tobytes(), "image/jpeg")
         except Exception as exc:
             logger.error("Failed to save frame: %s", exc)
             return None
