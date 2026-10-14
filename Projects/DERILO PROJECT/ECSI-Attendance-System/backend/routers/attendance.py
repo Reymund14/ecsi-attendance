@@ -230,3 +230,41 @@ async def today_summary(db: AsyncSession = Depends(get_db)):
         summary[row.status.value] = row.count
     summary["total"] = sum(summary.values())
     return summary
+
+
+# ── Parent summary ───────────────────────────────────────────────────────────
+@router.get("/parent-summary")
+async def parent_attendance_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.PARENT:
+        raise HTTPException(status_code=403, detail="Only parent accounts can access this summary.")
+
+    child_ids = current_user.children or []
+    if not child_ids:
+        return {"children": []}
+
+    stmt = (
+        select(AttendanceRecord)
+        .options(selectinload(AttendanceRecord.user))
+        .where(AttendanceRecord.user_id.in_(child_ids))
+        .order_by(AttendanceRecord.timestamp.desc())
+    )
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+
+    by_child = {}
+    for record in records:
+        by_child.setdefault(record.user_id, []).append({
+            "id": str(record.id),
+            "full_name": record.user.full_name if record.user else "",
+            "id_number": record.user.id_number if record.user else "",
+            "status": record.status.value,
+            "check_type": record.check_type.value,
+            "cosine_distance": record.cosine_distance,
+            "terminal_id": record.terminal_id,
+            "timestamp": record.timestamp.isoformat(),
+        })
+
+    return {"children": [{"child_id": child_id, "records": by_child.get(child_id, [])} for child_id in child_ids if child_id in by_child]}

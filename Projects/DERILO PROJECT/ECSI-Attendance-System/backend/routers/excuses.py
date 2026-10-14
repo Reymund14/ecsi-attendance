@@ -150,3 +150,25 @@ async def review_excuse(
     await db.flush()
     await db.refresh(request)
     return await _to_out(request)
+
+
+@router.get("/parent", response_model=list[ExcuseOut])
+async def list_parent_excuses(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.PARENT:
+        raise HTTPException(status_code=403, detail="Only parent accounts can access child excuse records.")
+
+    child_ids = current_user.children or []
+    if not child_ids:
+        return []
+
+    stmt = (
+        select(ExcuseRequest)
+        .options(selectinload(ExcuseRequest.student))
+        .where(ExcuseRequest.student_id.in_(child_ids))
+        .order_by(ExcuseRequest.filed_at.desc())
+    )
+    result = await db.execute(stmt)
+    return [await _to_out(row) for row in result.scalars().unique().all()]

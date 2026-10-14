@@ -24,6 +24,7 @@ class UserCreate(BaseModel):
     address: Optional[str] = None
     parent_name: Optional[str] = None
     parent_contact: Optional[str] = None
+    children: Optional[List[str]] = None
 
 
 class UserUpdate(BaseModel):
@@ -36,6 +37,7 @@ class UserUpdate(BaseModel):
     parent_name: Optional[str] = None
     parent_contact: Optional[str] = None
     status: Optional[AccountStatus] = None
+    children: Optional[List[str]] = None
 
 
 class UserPasswordChange(BaseModel):
@@ -56,6 +58,7 @@ class UserOut(BaseModel):
     address: Optional[str] = None
     parent_name: Optional[str] = None
     parent_contact: Optional[str] = None
+    children: Optional[List[str]] = None
     profile_photo_path: Optional[str]
     has_rfid: bool = False
     rfid_uid: Optional[str] = None
@@ -70,6 +73,7 @@ class UserOut(BaseModel):
         obj.has_rfid = user.rfid_card is not None and user.rfid_card.is_active
         obj.rfid_uid = user.rfid_card.card_uid if obj.has_rfid else None
         obj.has_face = user.face_embedding is not None
+        obj.children = getattr(user, "children", None)
         return obj
 
 

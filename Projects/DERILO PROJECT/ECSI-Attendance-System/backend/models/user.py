@@ -51,11 +51,24 @@ class UUIDString(TypeDecorator):
         return value
 
 
+# ── JSON-backed string list ───────────────────────────────────────────────────
+class StringListJSON(TypeDecorator):
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return _json.dumps(value) if value is not None else None
+
+    def process_result_value(self, value, dialect):
+        return _json.loads(value) if value is not None else None
+
+
 # ── Enumerations ──────────────────────────────────────────────────────────────
 class UserRole(str, enum.Enum):
     SUPER_ADMIN = "super_admin"
     FACULTY = "faculty"
     STUDENT = "student"
+    PARENT = "parent"
 
 
 class AccountStatus(str, enum.Enum):
@@ -90,6 +103,7 @@ class User(Base):
     address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     parent_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     parent_contact: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    children: Mapped[Optional[List[str]]] = mapped_column(StringListJSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

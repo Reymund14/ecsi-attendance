@@ -83,5 +83,5 @@ def require_roles(*roles: UserRole):
 require_super_admin = require_roles(UserRole.SUPER_ADMIN)
 require_faculty_or_above = require_roles(UserRole.SUPER_ADMIN, UserRole.FACULTY)
 require_any_authenticated = require_roles(
-    UserRole.SUPER_ADMIN, UserRole.FACULTY, UserRole.STUDENT
+    UserRole.SUPER_ADMIN, UserRole.FACULTY, UserRole.STUDENT, UserRole.PARENT
 )

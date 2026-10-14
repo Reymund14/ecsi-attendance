@@ -26,7 +26,12 @@ let backendExcuses = [];
 // pre-enabled channels before the server responds.
 let notifSettings = {sms_enabled:false,email_enabled:false,sms_provider:'Not configured',email_provider:'Not configured',recipients:{parents:true,admins:true,faculty:true},triggers:{proxy_alert:true,daily_summary:false,absence_3days:true,new_enrollment:true}};
 function notifCfg(){return demoMode?MOCK.notifSettings:notifSettings;}
-function appUsers(){return demoMode?MOCK.users:[...backendUsers.filter(u=>u.id!==currentUser?.id),...(currentUser?[currentUser]:[])];}
+function appUsers(){
+  if (demoMode) return MOCK.users;
+  const base = [...backendUsers.filter(u => u.id !== currentUser?.id)];
+  if (currentUser) base.push(currentUser);
+  return base;
+}
 function appAttendance(){return demoMode?MOCK.attendance:backendAttendance;}
 function appSections(){return demoMode?Object.keys(MOCK.sections):[...new Set(appUsers().map(u=>u.section).filter(Boolean))].sort();}
 function appAdviserFor(section){return appUsers().find(u=>u.role==='faculty'&&u.section===section)?.full_name||'';}

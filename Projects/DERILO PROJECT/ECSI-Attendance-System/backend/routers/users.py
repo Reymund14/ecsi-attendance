@@ -91,6 +91,7 @@ async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
         address=body.address,
         parent_name=body.parent_name,
         parent_contact=body.parent_contact,
+        children=body.children or ([] if body.role != UserRole.PARENT else []),
     )
     db.add(user)
     await db.flush()
@@ -202,3 +203,26 @@ async def delete_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     # Remove the stored avatar too, otherwise the object outlives the user and
     # accumulates in the bucket (and in local dev on disk).
     await storage.delete_photo(str(user_id))
+
+
+# ── Parent dashboard data ─────────────────────────────────────────────────────
+@router.get("/me/children", response_model=List[UserOut])
+async def get_my_children(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.PARENT:
+        raise HTTPException(status_code=403, detail="Only parent accounts can access child records.")
+
+    child_ids = current_user.children or []
+    if not child_ids:
+        return []
+
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.rfid_card), selectinload(User.face_embedding))
+        .where(User.id.in_(child_ids))
+        .order_by(User.full_name)
+    )
+    kids = result.scalars().all()
+    return [UserOut.from_orm_extended(u) for u in kids]

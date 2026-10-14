@@ -67,6 +67,7 @@ async def init_db() -> None:
             "address": "VARCHAR(255)",
             "parent_name": "VARCHAR(128)",
             "parent_contact": "VARCHAR(32)",
+            "children": "TEXT",
         }
         if _is_sqlite:
             existing = await conn.run_sync(

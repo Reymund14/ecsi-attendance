@@ -7,21 +7,34 @@
 // ═══════════════════════════════════════════════════════════
 
 function _parentGetChildren(){
-  const ids = currentUser.children || [];
-  return ids.map(id => appUsers().find(u => u.id === id)).filter(Boolean);
+  if (demoMode) {
+    const ids = currentUser.children || [];
+    return ids.map(id => appUsers().find(u => u.id === id)).filter(Boolean);
+  }
+
+  const users = appUsers().filter(u => (currentUser.children || []).includes(u.id));
+  return users;
 }
 
 function _parentGetAttendance(childId){
-  // Combine MOCK records + live feedItems
-  const mockRecs = appAttendance().filter(a => {
-    const u = appUsers().find(x => x.id === childId);
-    return u && a.id_number === u.id_number;
-  });
-  const liveRecs = feedItems.filter(a => {
-    const u = appUsers().find(x => x.id === childId);
-    return u && a.id_number === u.id_number;
-  });
-  return [...liveRecs, ...mockRecs].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  if (demoMode) {
+    const mockRecs = appAttendance().filter(a => {
+      const u = appUsers().find(x => x.id === childId);
+      return u && a.id_number === u.id_number;
+    });
+    const liveRecs = feedItems.filter(a => {
+      const u = appUsers().find(x => x.id === childId);
+      return u && a.id_number === u.id_number;
+    });
+    return [...liveRecs, ...mockRecs].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  }
+
+  const children = _parentGetChildren();
+  const child = children.find(c => c.id === childId);
+  if (!child) return [];
+
+  const records = (backendAttendance || []).filter(a => a.user_id === childId || a.id_number === child.id_number);
+  return records.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 }
 
 function _parentStats(childId){
@@ -30,20 +43,58 @@ function _parentStats(childId){
   const proxy = recs.filter(r => r.status === 'proxy_anomaly').length;
   const timeIns = recs.filter(r => r.check_type === 'time_in');
   const days = new Set(timeIns.map(r => r.timestamp ? r.timestamp.slice(0,10) : '')).size;
-  const totalSchoolDays = 20; // mock
+  const totalSchoolDays = 20;
   const rate = days > 0 ? Math.min(100, Math.round((days / totalSchoolDays) * 100)) : 0;
   return {verified, proxy, days, rate, total: recs.length};
 }
 
 // ── Parent Dashboard ──────────────────────────────────────
-function renderParentDashboard(el){
+async function renderParentDashboard(el){
   const children = _parentGetChildren();
-  const child = children[0]; // primary child
-  const stats = child ? _parentStats(child.id) : {};
-  const recs = child ? _parentGetAttendance(child.id).slice(0,6) : [];
-  const excuses = child ? MOCK.excuseRequests.filter(e => e.student_id === child.id) : [];
+  const child = children[0];
+  let stats = child ? _parentStats(child.id) : {};
+  let recs = child ? _parentGetAttendance(child.id).slice(0,6) : [];
+  let excuses = child ? MOCK.excuseRequests.filter(e => e.student_id === child.id) : [];
+
+  if (!demoMode && currentUser?.role === 'parent') {
+    try {
+      const [childrenResp, attendanceResp, excuseResp] = await Promise.all([
+        apiFetch('/users/me/children'),
+        apiFetch('/attendance/parent-summary'),
+        apiFetch('/excuses/parent')
+      ]);
+
+      if (childrenResp?.ok) {
+        const childList = await childrenResp.json();
+        currentUser.children = childList.map(c => c.id);
+        backendUsers = [...backendUsers.filter(u => !childList.some(c => c.id === u.id)), ...childList];
+      }
+
+      if (attendanceResp?.ok) {
+        const summary = await attendanceResp.json();
+        const mapped = [];
+        for (const item of summary.children || []) {
+          for (const rec of item.records || []) mapped.push({ ...rec, user_id: item.child_id });
+        }
+        backendAttendance = [...(backendAttendance || []).filter(r => !mapped.some(m => m.id === r.id)), ...mapped];
+      }
+
+      if (excuseResp?.ok) {
+        backendExcuses = await excuseResp.json();
+      }
+
+      const nextChildren = _parentGetChildren();
+      const nextChild = nextChildren[0];
+      stats = nextChild ? _parentStats(nextChild.id) : {};
+      recs = nextChild ? _parentGetAttendance(nextChild.id).slice(0,6) : [];
+      excuses = nextChild ? appExcuseRequests().filter(e => e.student_id === nextChild.id) : [];
+    } catch (err) {
+      console.warn('Parent dashboard backend sync failed:', err);
+    }
+  }
+
   const todayRec = recs.find(r => r.timestamp && r.timestamp.slice(0,10) === new Date().toISOString().slice(0,10));
-  const todayStatus = todayRec ? (todayRec.check_type === 'time_in' ? '✅ Present' : '✅ Present') : '⚠️ Not yet recorded';
+  const todayStatus = todayRec ? '✅ Present' : '⚠️ Not yet recorded';
   const todayColor = todayRec ? '#16A34A' : '#D97706';
 
   el.innerHTML = `
@@ -53,30 +104,27 @@ function renderParentDashboard(el){
     </div>
     ${demoMode ? `<div class="demo-banner"><div class="demo-banner-dot"></div>Demo Mode</div>` : ''}
     <div class="page-content">
-
-      <!-- Welcome + Child Info -->
       <div class="card p-4" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
         <div style="display:flex;align-items:center;gap:14px">
           <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#9333EA,#7C3AED);display:flex;align-items:center;justify-content:center;font-size:22px;color:#fff;font-weight:700;flex-shrink:0">
-            ${child ? child.full_name[0] : '?'}
-          </div>
+            ${(child || _parentGetChildren()[0]) ? ((_parentGetChildren()[0]?.full_name || currentUser.full_name)[0] || '?') : '?'
+          }</div>
           <div>
             <div style="font-size:14px;color:#6B7280">Monitoring child of</div>
             <div style="font-weight:700;font-size:16px">${currentUser.full_name}</div>
-            ${child ? `
+            ${(_parentGetChildren()[0]) ? `
               <div style="margin-top:4px;display:flex;align-items:center;gap:8px">
-                <span style="font-size:13px;font-weight:600;color:#1F2937">👦 ${child.full_name}</span>
-                <span style="font-size:11px;color:#fff;background:#9333EA;padding:2px 8px;border-radius:99px">${child.section || 'No section'}</span>
-                <span style="font-size:11px;color:#6B7280">${child.id_number}</span>
+                <span style="font-size:13px;font-weight:600;color:#1F2937">👦 ${_parentGetChildren()[0].full_name}</span>
+                <span style="font-size:11px;color:#fff;background:#9333EA;padding:2px 8px;border-radius:99px">${_parentGetChildren()[0].section || 'No section'}</span>
+                <span style="font-size:11px;color:#6B7280">${_parentGetChildren()[0].id_number}</span>
               </div>` : '<div style="color:#EF4444;font-size:12px">No linked child found</div>'}
           </div>
         </div>
         <div style="display:flex;gap:8px">
-          ${children.slice(1).map(c=>`<span style="font-size:11px;padding:4px 10px;border-radius:99px;background:#F3F4F6;color:#374151">👦 ${c.full_name}</span>`).join('')}
+          ${_parentGetChildren().slice(1).map(c=>`<span style="font-size:11px;padding:4px 10px;border-radius:99px;background:#F3F4F6;color:#374151">👦 ${c.full_name}</span>`).join('')}
         </div>
       </div>
 
-      <!-- Stat Cards -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px">
         <div class="card p-4" style="border-left:4px solid ${todayColor}">
           <div class="stat-label">Today's Status</div>
@@ -101,52 +149,44 @@ function renderParentDashboard(el){
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-
-        <!-- Recent Attendance -->
         <div class="card p-4">
           <div style="font-weight:700;font-size:13px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
             <span>📋 Recent Attendance</span>
             <button onclick="navigate('parent-attendance')" style="font-size:11px;color:#9333EA;background:none;border:none;cursor:pointer;font-weight:600">View All →</button>
           </div>
-          ${recs.length === 0 ? '<div style="text-align:center;color:#9CA3AF;padding:20px;font-size:12px">No records yet</div>' :
-            recs.map(r => {
-              const isIn = r.check_type === 'time_in';
-              const isProxy = r.status === 'proxy_anomaly';
-              const color = isProxy ? '#EF4444' : isIn ? '#16A34A' : '#3B82F6';
-              const label = isProxy ? '⚠ PROXY' : isIn ? '↗ IN' : '↙ OUT';
-              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F3F4F6">
-                <div style="width:7px;height:7px;border-radius:50%;background:${color};flex-shrink:0"></div>
-                <div style="flex:1;min-width:0">
-                  <div style="font-size:12px;font-weight:600">${new Date(r.timestamp).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</div>
-                  <div style="font-size:10px;color:#9CA3AF">${new Date(r.timestamp).toLocaleTimeString()} · ${r.terminal_id || ''}</div>
-                </div>
-                <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${isProxy?'#FEE2E2':isIn?'#DCFCE7':'#DBEAFE'};color:${color};font-weight:600">${label}</span>
-              </div>`;
-            }).join('')
-          }
+          ${recs.length === 0 ? '<div style="text-align:center;color:#9CA3AF;padding:20px;font-size:12px">No records yet</div>' : recs.map(r => {
+            const isIn = r.check_type === 'time_in';
+            const isProxy = r.status === 'proxy_anomaly';
+            const color = isProxy ? '#EF4444' : isIn ? '#16A34A' : '#3B82F6';
+            const label = isProxy ? '⚠ PROXY' : isIn ? '↗ IN' : '↙ OUT';
+            return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F3F4F6">
+              <div style="width:7px;height:7px;border-radius:50%;background:${color};flex-shrink:0"></div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:600">${new Date(r.timestamp).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</div>
+                <div style="font-size:10px;color:#9CA3AF">${new Date(r.timestamp).toLocaleTimeString()} · ${r.terminal_id || ''}</div>
+              </div>
+              <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${isProxy ? '#FEE2E2' : isIn ? '#DCFCE7' : '#DBEAFE'};color:${color};font-weight:600">${label}</span>
+            </div>`;
+          }).join('')}
         </div>
 
-        <!-- Excuse Requests -->
         <div class="card p-4">
           <div style="font-weight:700;font-size:13px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
             <span>📝 Excuse Requests</span>
             <button onclick="navigate('parent-excuse')" style="font-size:11px;color:#9333EA;background:none;border:none;cursor:pointer;font-weight:600">File New →</button>
           </div>
-          ${excuses.length === 0 ? '<div style="text-align:center;color:#9CA3AF;padding:20px;font-size:12px">No excuses filed</div>' :
-            excuses.slice(0,4).map(ex => {
-              const sc = {approved:'#16A34A',pending:'#D97706',rejected:'#EF4444'}[ex.status] || '#6B7280';
-              const bg = {approved:'#DCFCE7',pending:'#FEF9C3',rejected:'#FEE2E2'}[ex.status] || '#F3F4F6';
-              return `<div style="padding:8px 0;border-bottom:1px solid #F3F4F6">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-                  <span style="font-size:12px;font-weight:600">${ex.date}</span>
-                  <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${bg};color:${sc};font-weight:600">${ex.status}</span>
-                </div>
-                <div style="font-size:11px;color:#6B7280;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${ex.reason}</div>
-              </div>`;
-            }).join('')
-          }
+          ${excuses.length === 0 ? '<div style="text-align:center;color:#9CA3AF;padding:20px;font-size:12px">No excuses filed</div>' : excuses.slice(0,4).map(ex => {
+            const sc = {approved:'#16A34A',pending:'#D97706',rejected:'#EF4444'}[ex.status] || '#6B7280';
+            const bg = {approved:'#DCFCE7',pending:'#FEF9C3',rejected:'#FEE2E2'}[ex.status] || '#F3F4F6';
+            return `<div style="padding:8px 0;border-bottom:1px solid #F3F4F6">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+                <span style="font-size:12px;font-weight:600">${ex.date}</span>
+                <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${bg};color:${sc};font-weight:600">${ex.status}</span>
+              </div>
+              <div style="font-size:11px;color:#6B7280;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${ex.reason}</div>
+            </div>`;
+          }).join('')}
         </div>
-
       </div>
     </div>`;
 }

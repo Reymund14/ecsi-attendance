@@ -82,6 +82,11 @@ PEOPLE = [
     ("FAC003", "Lorna Dela Rosa", UserRole.FACULTY, AccountStatus.ACTIVE,
      "Grade 11-C", "English", "fac003@ecsi.edu.ph", True, False),
 
+    ("PAR001", "Roberto dela Cruz", UserRole.PARENT, AccountStatus.ACTIVE,
+     None, None, "par001@ecsi.edu.ph", False, False),
+    ("PAR002", "Patricia Reyes", UserRole.PARENT, AccountStatus.ACTIVE,
+     None, None, "par002@ecsi.edu.ph", False, False),
+
     ("STU2024001", "Juan dela Cruz", UserRole.STUDENT, AccountStatus.ACTIVE,
      "Grade 10-A", None, "stu2024001@ecsi.edu.ph", True, True),
     ("STU2024002", "Ana Reyes", UserRole.STUDENT, AccountStatus.ACTIVE,
@@ -175,6 +180,8 @@ def password_for(role: UserRole, id_number: str) -> str:
         return "Admin@1234"
     if id_number == "ADMIN002":
         return "Registrar@1234"
+    if id_number.startswith("PAR"):
+        return "Parent@1234"
     if role is UserRole.FACULTY:
         return "Faculty@1234"
     return "Student@1234"
@@ -238,6 +245,19 @@ async def seed(session, reset: bool) -> None:
         user.section = section
         user.department = dept
         users[id_num] = user
+
+    # Parent-to-child linkage for the seeded parent accounts.
+    parent_children = {
+        "PAR001": ["STU2024001", "STU2024007"],
+        "PAR002": ["STU2024002", "STU2024010"],
+    }
+    for parent_id, child_ids in parent_children.items():
+        parent = users[parent_id]
+        parent.children = [users[child_id].id for child_id in child_ids if child_id in users]
+        for child_id in child_ids:
+            if child_id in users:
+                users[child_id].parent_name = parent.full_name
+                users[child_id].parent_contact = parent.phone or parent.email
 
     await session.flush()
     print(f"  users:            {len(users)}")
@@ -391,12 +411,12 @@ async def seed(session, reset: bool) -> None:
     print("  ------------------")
     for id_num, name, role, status, *_ in PEOPLE:
         if id_num in ("ADMIN001", "ADMIN002", "FAC001", "STU2024001",
-                      "STU2024004", "STU2024014"):
+                      "STU2024004", "STU2024014", "PAR001", "PAR002"):
             flag = "" if status is AccountStatus.ACTIVE else f"  [{status.value} - login blocked]"
             print(f"    {id_num:<12} {password_for(role, id_num):<14} {role.value:<12} {name}{flag}")
     print()
     print(f"  All other accounts share the role password: "
-          f"Admin@1234 / Faculty@1234 / Student@1234")
+          f"Admin@1234 / Faculty@1234 / Student@1234 / Parent@1234")
 
 
 async def main() -> None:
