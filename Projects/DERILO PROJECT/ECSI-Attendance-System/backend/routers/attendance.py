@@ -2,11 +2,12 @@
 Attendance Router — manual override, records query, WebSocket trigger endpoint
 """
 
+import logging
 import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -18,9 +19,48 @@ from models.attendance import AttendanceRecord, AttendanceStatus, ProxyAuditLog
 from models.user import User, UserRole
 from schemas.attendance import AttendanceOut, AttendanceOverrideRequest, CaptureAccessOut
 from services import storage
+from services.face_service import FaceService, face_pipeline_available
 from websocket.manager import ws_manager
 
 router = APIRouter()
+face_service = FaceService()
+logger = logging.getLogger("ecsi.attendance.router")
+
+
+@router.post("/verify-face/{user_id}")
+async def verify_live_face(
+    user_id: uuid.UUID,
+    frame: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_faculty_or_above),
+):
+    """Verify a live camera frame against the user's enrolled biometric template."""
+    user_id = str(user_id)
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.face_embedding))
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if not user.face_embedding:
+        raise HTTPException(status_code=409, detail="No face template is enrolled for this user.")
+    if not face_pipeline_available():
+        raise HTTPException(status_code=503, detail="Face verification is unavailable on this server.")
+
+    frame_bytes = await frame.read()
+    if storage.sniff_image(frame_bytes) is None:
+        raise HTTPException(status_code=400, detail="The camera frame is not a valid image.")
+    try:
+        matched, distance = await face_service.verify(
+            live_frame_bytes=frame_bytes,
+            stored_embedding=user.face_embedding.embedding_vector,
+        )
+    except Exception as exc:
+        logger.exception("Face verification failed for %s", user.id_number)
+        raise HTTPException(status_code=503, detail="Face verification failed; attendance was not recorded.") from exc
+    return {"matched": matched, "cosine_distance": distance}
 
 
 def _build_attendance_out(record: AttendanceRecord) -> AttendanceOut:

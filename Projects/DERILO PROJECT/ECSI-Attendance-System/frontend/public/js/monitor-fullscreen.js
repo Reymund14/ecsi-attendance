@@ -369,20 +369,10 @@ function fsTapRfid(){
 
   setTimeout(()=>{
     if(!fsCamStream){
-      // No camera — log RFID-only with IN/OUT
-      const now=new Date();
-      const ev={full_name:u.full_name,id_number:u.id_number,status:'rfid_only',check_type:checkType,
-        terminal_id:'Terminal-1',timestamp:now.toISOString(),rfid_uid:uid,section:u.section||u.department||''};
-      feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-      recordCheckType(u.id_number, checkType);
-      _recordTap(u.id_number); // update debounce timer even without camera auth
-      refreshFeed(); refreshMonFeed(); fsFeedRefresh();
-      const isIn=checkType==='time_in';
-      if(badge){badge.textContent=isIn?'✅ Time IN':'🔴 Time OUT';badge.style.color=isIn?'#41A638':'#DC2626';}
-      if(userEl){userEl.style.color=isIn?'#41A638':'#DC2626';}
       fsAuthState='face_done';
-      // Keep result visible 2s, then reset
-      setTimeout(()=>{fsAuthState='idle';fsRfidReset();if(tapBtn)tapBtn.disabled=false;},2000);
+      if(badge){badge.textContent='Camera required';badge.style.color='#EF4444';}
+      _monWarnToast('no_cam','Turn on the camera before scanning a card. Attendance was not recorded.');
+      setTimeout(()=>{fsAuthState='idle';fsRfidReset();if(tapBtn)tapBtn.disabled=false;},2500);
       return;
     }
     fsAuthState='face_scanning';
@@ -396,8 +386,8 @@ function fsTapRfid(){
       const fsVid=document.getElementById('fs-video');
       const fsCapturedFrame=fsVid&&fsCamStream ? await captureCameraFrame(fsVid) : null;
       if(fsTok!==_pipelineToken) return;
-      // Let face matching judge the captured image; skin-color heuristics reject valid faces.
-      if(!fsCapturedFrame){
+      const _fsFaceCheck=fsVid ? detectFaceInFrame(fsVid) : {ok:false,reason:'no_video'};
+      if(!fsCapturedFrame || !_fsFaceCheck.ok){
         _pipelineToken++; // cancel step B
         fsAuthState='face_done';
         fsSetCamOverlay('no_face_in_frame', u);
@@ -411,7 +401,7 @@ function fsTapRfid(){
           animation:slideUp .25s ease-out;min-width:300px;pointer-events:none;border-left:4px solid #F97316`;
         t.innerHTML=`<div style="font-size:22px">👁</div>
           <div><div style="font-weight:700;color:#FED7AA">⚠ FACE NOT DETECTED — Tap RFID to Retry</div>
-          <div style="color:#9CA3AF;font-size:11px">Camera frame not ready for ${u.full_name}. Keep the camera on and tap RFID to retry.</div></div>`;
+          <div style="color:#9CA3AF;font-size:11px">${u.full_name} — ${_fsFaceCheck.reason==='too_dark'?'Camera too dark — turn on the lights.':_fsFaceCheck.reason==='no_content'?'No content detected — uncover the camera.':'No face visible in frame — face the camera and tap RFID again.'}</div></div>`;
         document.body.appendChild(t); setTimeout(()=>t.remove(),3500);
         setTimeout(()=>{fsAuthState='idle';fsRfidReset();if(fsCamStream)fsSetCamOverlay('idle');if(tapBtn)tapBtn.disabled=false;},3400);
         return;
@@ -426,7 +416,10 @@ function fsTapRfid(){
       if(fsTok!==_pipelineToken) return;
       const liveFeatures=await fsLiveFeaturePromise;
       if(fsTok!==_pipelineToken) return;
-      const result=simFaceMatch(u, liveFeatures);
+      const result=demoMode
+        ? simFaceMatch(u, liveFeatures)
+        : await verifyFaceFrame(u, fsCapturedFrame);
+      if(fsTok!==_pipelineToken) return;
       // pass fsCapturedFrame through closure
       fsAuthState='face_done';
       const now=new Date();

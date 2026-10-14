@@ -560,46 +560,52 @@ async function captureCameraFrame(vid, timeoutMs=1500){
   return null;
 }
 
+// Lightweight face-presence heuristic retained as a quick camera-frame gate.
 function detectFaceInFrame(vid){
   if(!vid) return {ok:false,reason:'no_video'};
   const W=32,H=32;
-  const qc=document.createElement('canvas'); qc.width=W; qc.height=H;
-  const qctx=qc.getContext('2d');
-  qctx.drawImage(vid,0,0,W,H);
-  const d=qctx.getImageData(0,0,W,H).data;
-
-  // ── 1. Brightness ────────────────────────────────────────────────────────
-  let bSum=0;
-  for(let i=0;i<d.length;i+=4) bSum+=(d[i]+d[i+1]+d[i+2])/3;
-  const avgB=bSum/(W*H);
-  if(avgB<30) return {ok:false,reason:'too_dark'};
-
-  // ── 2. Variance ──────────────────────────────────────────────────────────
-  let vSum=0;
-  for(let i=0;i<d.length;i+=4){const g=(d[i]+d[i+1]+d[i+2])/3; vSum+=(g-avgB)**2;}
-  if(vSum/(W*H)<350) return {ok:false,reason:'no_content'};
-
-  // ── 3. Skin-tone presence in centre ─────────────────────────────────────
-  // A face pointed at the camera should have skin-tone pixels in the centre
-  // quarter of the frame. Skin tones across all ethnicities satisfy:
-  //   R > 60, R > G, G > B*0.6, R-B > 20   (works for light to dark skin)
-  let skinCount=0, centreTotal=0;
-  const cx=W/2, cy=H/2, rr=W/3; // centre circle
-  for(let py=0;py<H;py++){
-    for(let px=0;px<W;px++){
-      const dx=px-cx,dy=py-cy;
-      if(dx*dx+dy*dy>rr*rr) continue;
-      centreTotal++;
-      const i=(py*W+px)*4;
-      const r=d[i],g=d[i+1],b=d[i+2];
-      if(r>60 && r>g && g>b*0.6 && r-b>20) skinCount++;
-    }
+  const canvas=document.createElement('canvas'); canvas.width=W; canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  if(!ctx) return {ok:false,reason:'no_content'};
+  ctx.drawImage(vid,0,0,W,H);
+  const pixels=ctx.getImageData(0,0,W,H).data;
+  let brightness=0;
+  for(let i=0;i<pixels.length;i+=4) brightness+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
+  const average=brightness/(W*H);
+  if(average<30) return {ok:false,reason:'too_dark'};
+  let variance=0;
+  for(let i=0;i<pixels.length;i+=4){const gray=(pixels[i]+pixels[i+1]+pixels[i+2])/3;variance+=(gray-average)**2;}
+  if(variance/(W*H)<350) return {ok:false,reason:'no_content'};
+  let skin=0,total=0;
+  const cx=W/2,cy=H/2,radius=W/3;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const dx=x-cx,dy=y-cy;
+    if(dx*dx+dy*dy>radius*radius) continue;
+    total++;
+    const i=(y*W+x)*4,red=pixels[i],green=pixels[i+1],blue=pixels[i+2];
+    if(red>60&&red>green&&green>blue*0.6&&red-blue>20) skin++;
   }
-  // At least 12 % of centre pixels must be skin-tone
-  if(centreTotal>0 && skinCount/centreTotal<0.12) return {ok:false,reason:'no_face'};
-
+  if(total&&skin/total<0.12) return {ok:false,reason:'no_face'};
   return {ok:true};
 }
+
+async function verifyFaceFrame(student, frameDataUrl){
+  if(demoMode) return simFaceMatch(student, await extractImageFeatures(frameDataUrl));
+  if(!frameDataUrl) return {matched:false,student,cosine:null,status:'proxy_anomaly'};
+  try{
+    const frameBlob=await (await fetch(frameDataUrl)).blob();
+    const form=new FormData();
+    form.append('frame',frameBlob,'attendance-frame.jpg');
+    const response=await apiFetch(`/attendance/verify-face/${encodeURIComponent(student.id)}`,{method:'POST',body:form});
+    if(response?.status===409) return {matched:false,student,cosine:null,status:'no_face_template'};
+    if(!response?.ok) return {matched:false,student,cosine:null,status:'verification_unavailable'};
+    const result=await response.json();
+    return {matched:result.matched===true,student,cosine:result.cosine_distance,status:result.matched?'verified':'proxy_anomaly'};
+  }catch{
+    return {matched:false,student,cosine:null,status:'proxy_anomaly'};
+  }
+}
+
 
 // ── Uniform-LBP lookup table (58 uniform patterns + 1 non-uniform = 59 bins) ──
 const _ULBP=(()=>{
@@ -702,12 +708,9 @@ function simFaceMatch(student, liveFeatures){
   }
 
   // ── Pre-seeded users (has_face=true but no enrolled photo) ─────────────────
-  // First tap: enroll the live face as their template; subsequent taps: compare.
+  // Demo accounts without an enrolled template must fail closed.
   if(!student._faceFeatures){
-    // No stored template yet — treat this tap as enrollment (live capture stored)
-    if(liveFeatures) student._faceFeatures=liveFeatures;
-    const dist=parseFloat((Math.random()*0.10+0.04).toFixed(4));
-    return {matched:true,student,cosine:dist,status:'verified'};
+    return {matched:false,student,cosine:null,status:'no_face_template'};
   }
   // Subsequent taps: compare live against stored template
   if(liveFeatures){

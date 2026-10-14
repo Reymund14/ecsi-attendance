@@ -205,13 +205,13 @@ function _monRunFaceAuth(student, uid, checkType){
     if(tok!==_pipelineToken) return;
     if(badge){badge.textContent='Step 3 · Capturing…';badge.style.cssText='font-size:10px;padding:3px 8px;border-radius:99px;background:#F3F4F6;color:#374151';}
 
-    // A real captured frame is enough to proceed; face matching decides whether it matches.
-    if(!_capturedAuthFrame){
+    const _faceCheck=vid ? detectFaceInFrame(vid) : {ok:false,reason:'no_video'};
+    if(!_capturedAuthFrame || !_faceCheck.ok){
       _abortPipeline(
         'no_face_in_frame', student,
         '👁 No Face Detected',
         'no_face_in_frame',
-        `⚠ CAMERA FRAME NOT READY — ${student.full_name}: keep the camera on and tap RFID to retry.`
+        `⚠ FACE NOT DETECTED — ${student.full_name}: ${_faceCheck.reason==='too_dark'?'Camera too dark — turn on the lights.':_faceCheck.reason==='no_content'?'No content detected — uncover the camera.':'No face visible in frame — face the camera and tap RFID again.'}`
       );
       return;
     }
@@ -248,9 +248,12 @@ function _monRunFaceAuth(student, uid, checkType){
     if(tok!==_pipelineToken) return;
     const liveFeatures=_liveFeaturePromise ? await _liveFeaturePromise : null;
     if(tok!==_pipelineToken) return; // re-check after await
-    const result=simFaceMatch(student, liveFeatures);
+    const result=demoMode
+      ? simFaceMatch(student, liveFeatures)
+      : await verifyFaceFrame(student, _capturedAuthFrame);
+    if(tok!==_pipelineToken) return;
     // Liveness check: 0% failure for enrolled-photo users; 3% for pre-seeded
-    const livenessOk=student.face_photo ? true : Math.random()>0.03;
+    const livenessOk=demoMode ? (student.face_photo ? true : Math.random()>0.03) : true;
     authState='face_done';
     const timeStr=now.toLocaleTimeString();
 
