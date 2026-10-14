@@ -121,11 +121,12 @@ function refreshFeed(){
   if(!items.length){el.innerHTML='<div class="feed-empty"><div class="feed-empty-icon">&#128247;</div><div style="font-weight:600;font-size:13px">Waiting for RFID taps&hellip;</div><div style="font-size:12px;color:#9CA3AF;margin-top:4px">Events appear here in real time when a card is scanned</div></div>';return;}
   el.innerHTML=items.map(ev=>{
     const cls=ev.status==='proxy_anomaly'||ev.status==='face_mismatch'?'proxy':ev.status==='unregistered_rfid'||ev.status==='no_face_template'?'danger':ev.status==='verified'?'verified':'warning';
-    const avatar=ev.status==='unregistered_rfid'?'⛔':ev.status==='face_mismatch'||ev.status==='no_face_template'?'🚷':(ev.full_name||'?')[0];
+    const surname=attendanceSurname(ev.full_name||ev.label);
+    const avatar=ev.status==='unregistered_rfid'?'⛔':ev.status==='face_mismatch'||ev.status==='no_face_template'?'🚷':surname[0];
     return `<div class="feed-item ${cls} slide-in" data-feed-key="${feedItemKey(ev)}">
       <div class="feed-avatar" style="${cls==='danger'||cls==='proxy'?'background:rgba(239,68,68,.15)':''}">${avatar}</div>
       <div style="flex:1;min-width:0">
-        <div class="feed-name">${ev.full_name||ev.label||'Unknown'}</div>
+        <div class="feed-name">${surname}</div>
         <div class="feed-sub">${ev.id_number?ev.id_number+' · ':''} ${ev.terminal_id||'Terminal-1'}${ev.detail?' · '+ev.detail:''}</div>
       </div>
       ${badgeHtml(ev.status)}</div>`;

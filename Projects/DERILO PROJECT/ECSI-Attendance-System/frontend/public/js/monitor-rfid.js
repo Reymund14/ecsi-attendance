@@ -194,29 +194,24 @@ function _monRunFaceAuth(student, uid, checkType){
   // ══════════════════════════════════════════════════════════
 
   // Step 3: Capture frame + face presence detection + start feature extraction
-  let _liveFeaturePromise=null; // resolved before Step 7 fires (~1000ms later)
-  setTimeout(()=>{
+  let _frameCapturePromise=null; let _liveFeaturePromise=null; // resolved before Step 7 fires (~1000ms later)
+  setTimeout(async ()=>{
     if(tok!==_pipelineToken) return;
     monSetCamOverlay('capturing');
     _monCaptureFlash();
     // Snapshot live video
     const vid=document.getElementById('mon-video');
-    if(vid&&monitorCamStream&&vid.videoWidth>0){
-      const cv=document.createElement('canvas');
-      cv.width=vid.videoWidth; cv.height=vid.videoHeight;
-      cv.getContext('2d').drawImage(vid,0,0);
-      _capturedAuthFrame=cv.toDataURL('image/jpeg',0.82);
-    }
+    if(vid&&monitorCamStream){ _frameCapturePromise=captureCameraFrame(vid); _capturedAuthFrame=await _frameCapturePromise; }
+    if(tok!==_pipelineToken) return;
     if(badge){badge.textContent='Step 3 · Capturing…';badge.style.cssText='font-size:10px;padding:3px 8px;border-radius:99px;background:#F3F4F6;color:#374151';}
 
-    // ── Face presence detection — brightness, variance, and skin-tone centre check ──
-    const _faceCheck=vid ? detectFaceInFrame(vid) : {ok:false,reason:'no_video'};
-    if(!_capturedAuthFrame || !_faceCheck.ok){
+    // A real captured frame is enough to proceed; face matching decides whether it matches.
+    if(!_capturedAuthFrame){
       _abortPipeline(
         'no_face_in_frame', student,
         '👁 No Face Detected',
         'no_face_in_frame',
-        `⚠ FACE NOT DETECTED — ${student.full_name}: ${_faceCheck.reason==='too_dark'?'Camera too dark — turn on the lights.':_faceCheck.reason==='no_content'?'No content detected — uncover the camera.':'No face visible in frame — look directly at the camera.'} Tap RFID to retry.`
+        `⚠ CAMERA FRAME NOT READY — ${student.full_name}: keep the camera on and tap RFID to retry.`
       );
       return;
     }
@@ -249,6 +244,8 @@ function _monRunFaceAuth(student, uid, checkType){
   setTimeout(async ()=>{
     if(tok!==_pipelineToken) return;
     // Await live features (extraction started at Step 3, ~1000ms ago — already done)
+    if(_frameCapturePromise) await _frameCapturePromise;
+    if(tok!==_pipelineToken) return;
     const liveFeatures=_liveFeaturePromise ? await _liveFeaturePromise : null;
     if(tok!==_pipelineToken) return; // re-check after await
     const result=simFaceMatch(student, liveFeatures);

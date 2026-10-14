@@ -202,9 +202,9 @@ function fsFeedRefresh(){
     const borderColor=isProxy?'#7F1D1D':isIn?'#14532D':'#1E3A5F';
     const avatarBg=isProxy?'#EF4444':isIn?'#41A638':'#3B82F6';
     return `<div data-feed-key="${feedItemKey(ev)}" style="background:${rowBg};border:1px solid ${borderColor};border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px">
-      <div style="width:30px;height:30px;border-radius:50%;background:${avatarBg};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff;flex-shrink:0">${(ev.full_name||'?')[0]}</div>
+      <div style="width:30px;height:30px;border-radius:50%;background:${avatarBg};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff;flex-shrink:0">${attendanceSurname(ev.full_name)[0]}</div>
       <div style="flex:1;min-width:0">
-        <div style="color:#F9FAFB;font-weight:600;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${ev.full_name||'Unknown'}</div>
+        <div style="color:#F9FAFB;font-weight:600;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${attendanceSurname(ev.full_name)}</div>
         <div style="color:#6B7280;font-size:10px">${ev.id_number||''}${sec} · ${new Date(ev.timestamp||Date.now()).toLocaleTimeString()}${dist}</div>
       </div>
       <span style="font-size:10px;padding:2px 7px;border-radius:99px;background:${isProxy?'#EF4444':inOutColor};color:#fff;flex-shrink:0;white-space:nowrap">${isProxy?'⚠ PROXY':inOutLabel}</span>
@@ -391,20 +391,13 @@ function fsTapRfid(){
     const fsTok=++_pipelineToken; // token so face-detect failure cancels simFaceMatch step
 
     // Step A @ 250ms: capture frame + face detection
-    setTimeout(()=>{
+    setTimeout(async ()=>{
       if(fsTok!==_pipelineToken) return;
-      let fsCapturedFrame=null;
       const fsVid=document.getElementById('fs-video');
-      if(fsVid&&fsCamStream&&fsVid.videoWidth>0){
-        const cv=document.createElement('canvas');
-        cv.width=fsVid.videoWidth; cv.height=fsVid.videoHeight;
-        cv.getContext('2d').drawImage(fsVid,0,0);
-        fsCapturedFrame=cv.toDataURL('image/jpeg',0.82);
-      }
-      // Face presence detection — brightness, variance, skin-tone centre check
-      const _fsFaceCheck=fsVid ? detectFaceInFrame(fsVid) : {ok:false,reason:'no_video'};
-      const facePresent=fsCapturedFrame&&_fsFaceCheck.ok;
-      if(!facePresent){
+      const fsCapturedFrame=fsVid&&fsCamStream ? await captureCameraFrame(fsVid) : null;
+      if(fsTok!==_pipelineToken) return;
+      // Let face matching judge the captured image; skin-color heuristics reject valid faces.
+      if(!fsCapturedFrame){
         _pipelineToken++; // cancel step B
         fsAuthState='face_done';
         fsSetCamOverlay('no_face_in_frame', u);
@@ -416,11 +409,9 @@ function fsTapRfid(){
           background:#1F2937;color:#fff;border-radius:12px;padding:14px 20px;font-size:12px;
           display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.5);
           animation:slideUp .25s ease-out;min-width:300px;pointer-events:none;border-left:4px solid #F97316`;
-        const _fsReason=_fsFaceCheck?.reason;
-        const _fsReasonText=_fsReason==='too_dark'?'Camera too dark — turn on the lights.':_fsReason==='no_content'?'No content detected — uncover the camera.':'Look directly at the camera.';
         t.innerHTML=`<div style="font-size:22px">👁</div>
           <div><div style="font-weight:700;color:#FED7AA">⚠ FACE NOT DETECTED — Tap RFID to Retry</div>
-          <div style="color:#9CA3AF;font-size:11px">${u.full_name} — ${_fsReasonText}</div></div>`;
+          <div style="color:#9CA3AF;font-size:11px">Camera frame not ready for ${u.full_name}. Keep the camera on and tap RFID to retry.</div></div>`;
         document.body.appendChild(t); setTimeout(()=>t.remove(),3500);
         setTimeout(()=>{fsAuthState='idle';fsRfidReset();if(fsCamStream)fsSetCamOverlay('idle');if(tapBtn)tapBtn.disabled=false;},3400);
         return;

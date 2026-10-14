@@ -147,6 +147,18 @@ function setMonBadge(state){
   b.innerHTML=`<span style="width:7px;height:7px;border-radius:50%;background:${col};display:inline-block"></span> ${lbl}`;
 }
 
+function attendanceSurname(fullName){
+  const name=String(fullName||'').trim();
+  if(!name) return 'Unknown';
+  if(name.includes(',')) return name.split(',')[0].trim()||'Unknown';
+  const parts=name.split(/\s+/);
+  if(parts.length<2) return name;
+  const surnameParts=[parts.pop()];
+  const particles=new Set(['da','das','de','del','dela','di','dos','la','las','los','san','santa','van','von']);
+  while(parts.length&&particles.has(parts[parts.length-1].toLowerCase())) surnameParts.unshift(parts.pop());
+  return surnameParts.join(' ');
+}
+
 function refreshMonFeed(){
   const el=document.getElementById('mon-feed-list');
   const cnt=document.getElementById('mon-feed-count');
@@ -164,11 +176,12 @@ function refreshMonFeed(){
       ?'<span style="font-size:9px;background:#D1FAE5;color:#065F46;padding:1px 6px;border-radius:99px;font-weight:700;margin-right:4px">↗ IN</span>'
       :ev.check_type==='time_out'
       ?'<span style="font-size:9px;background:#FEE2E2;color:#991B1B;padding:1px 6px;border-radius:99px;font-weight:700;margin-right:4px">↙ OUT</span>':'';
-    const avatar=ev.status==='unregistered_rfid'?'⛔':ev.status==='no_face_template'?'🚷':isProxy?'🚫':(ev.full_name||'?')[0];
+    const surname=attendanceSurname(ev.full_name||ev.label);
+    const avatar=ev.status==='unregistered_rfid'?'⛔':ev.status==='no_face_template'?'🚷':isProxy?'🚫':surname[0];
     const avatarBg=isDanger||isProxy?'background:rgba(239,68,68,.15)':'';
     return `<div class="feed-item ${cls} slide-in" data-feed-key="${feedItemKey(ev)}">
       <div class="feed-avatar" style="${avatarBg}">${avatar}</div>
-      <div style="flex:1;min-width:0"><div class="feed-name">${inOutBadge}${ev.full_name||ev.label||'Unknown'}</div><div class="feed-sub">${ev.id_number||''}${sec} · ${new Date(ev.timestamp||Date.now()).toLocaleTimeString()}${dist}${ev.detail?' · '+ev.detail:''}</div></div>
+      <div style="flex:1;min-width:0"><div class="feed-name">${inOutBadge}${surname}</div><div class="feed-sub">${ev.id_number||''}${sec} · ${new Date(ev.timestamp||Date.now()).toLocaleTimeString()}${dist}${ev.detail?' · '+ev.detail:''}</div></div>
       ${badgeHtml(ev.status)}</div>`;
   }).join('');
   finishFeedRender(el,previousFeedKeys);
@@ -530,6 +543,23 @@ function showSmsToast(parentName, contact, studentName, checkType, time){
 //   2. Minimum pixel variance (rules out solid-color / blank frames)
 //   3. Skin-tone presence in centre region (rules out scenes with no face)
 // Returns {ok:true} or {ok:false, reason:string}
+async function captureCameraFrame(vid, timeoutMs=1500){
+  if(!vid) return null;
+  const deadline=Date.now()+timeoutMs;
+  while(Date.now()<deadline){
+    if(vid.readyState>=HTMLMediaElement.HAVE_CURRENT_DATA && vid.videoWidth>0 && vid.videoHeight>0){
+      const cv=document.createElement('canvas');
+      cv.width=vid.videoWidth; cv.height=vid.videoHeight;
+      const ctx=cv.getContext('2d');
+      if(!ctx) return null;
+      ctx.drawImage(vid,0,0);
+      return cv.toDataURL('image/jpeg',0.82);
+    }
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  return null;
+}
+
 function detectFaceInFrame(vid){
   if(!vid) return {ok:false,reason:'no_video'};
   const W=32,H=32;
