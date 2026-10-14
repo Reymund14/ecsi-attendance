@@ -49,7 +49,7 @@ function renderStudentProfile(el){
           </div>
           <div>
             <label style="font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:5px">Contact Number</label>
-            <input id="prof-contact" type="tel" inputmode="numeric" value="${me.phone||me.contact||''}" placeholder="e.g. 09171234567" maxlength="16" autocomplete="tel" style="width:100%;padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;box-sizing:border-box"/>
+            <input id="prof-contact" type="tel" inputmode="numeric" data-digits value="${me.phone||me.contact||''}" placeholder="e.g. 09171234567" maxlength="13" autocomplete="tel" style="width:100%;padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;box-sizing:border-box"/>
           </div>
           <div>
             <label style="font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:5px">Parent / Guardian Name</label>

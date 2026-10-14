@@ -131,12 +131,12 @@ function _userFormHtml(u){
         <input id="uf-dept" type="text" value="${isEdit?u.department||'':''}" placeholder="e.g. Science" maxlength="40" style="width:100%;box-sizing:border-box"/>
       </div>
       <div>
-        <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Email</label>
+        <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Email *</label>
         <input id="uf-email" type="email" value="${isEdit?u.email||'':''}" placeholder="user@school.edu" maxlength="120" autocomplete="email" style="width:100%;box-sizing:border-box"/>
       </div>
       <div>
         <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Mobile</label>
-        <input id="uf-phone" type="tel" inputmode="numeric" value="${isEdit?u.phone||'':''}" placeholder="09XXXXXXXXX" maxlength="16" autocomplete="tel" style="width:100%;box-sizing:border-box"/>
+        <input id="uf-phone" type="tel" inputmode="numeric" data-digits value="${isEdit?u.phone||'':''}" placeholder="09XXXXXXXXX" maxlength="13" autocomplete="tel" style="width:100%;box-sizing:border-box"/>
       </div>
       <div>
         <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Parent / Guardian</label>
@@ -144,7 +144,7 @@ function _userFormHtml(u){
       </div>
       <div>
         <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Parent Contact</label>
-        <input id="uf-parent-contact" type="tel" inputmode="numeric" value="${isEdit?u.parent_contact||'':''}" placeholder="09XXXXXXXXX" maxlength="16" style="width:100%;box-sizing:border-box"/>
+        <input id="uf-parent-contact" type="tel" inputmode="numeric" data-digits value="${isEdit?u.parent_contact||'':''}" placeholder="09XXXXXXXXX" maxlength="13" style="width:100%;box-sizing:border-box"/>
       </div>
       <div style="grid-column:1/-1">
         <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">Address</label>
@@ -212,7 +212,7 @@ async function saveUser(userId){
     [document.getElementById('uf-name'), V.name(name,'Full Name')],
     [document.getElementById('uf-id'), userId?'':V.idNumber(idNum,'ID Number')],
     [document.getElementById('uf-dept'), V.label(dept,false,'Department')],
-    [document.getElementById('uf-email'), V.email(email)],
+    [document.getElementById('uf-email'), V.email(email,true)],
     [document.getElementById('uf-phone'), V.phone(phone)],
     [document.getElementById('uf-parent'), V.nameOpt(parentName,'Parent / Guardian name')],
     [document.getElementById('uf-parent-contact'), V.phone(parentContact)],

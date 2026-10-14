@@ -128,12 +128,12 @@ function renderEnrolStep(){
           <div id="ns-adviser-row" style="display:none;background:#FEF9EC;border:1px solid #F2C111;border-radius:8px;padding:10px 14px;font-size:12px">
             <span style="color:#6B7280">👤 Adviser:</span> <strong id="ns-adviser-name"></strong>
           </div>
-          <div><label>Email (optional)</label><input type="email" id="ns-email" placeholder="student@ecsi.edu.ph" maxlength="120" autocomplete="email"/></div>
+          <div><label>Email *</label><input type="email" id="ns-email" placeholder="student@ecsi.edu.ph" maxlength="120" autocomplete="email"/></div>
           <div style="border-top:1px solid #E5E7EB;padding-top:14px;margin-top:2px">
             <div style="font-size:12px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">👨‍👩‍👧 Parent / Guardian Information</div>
             <div style="display:grid;gap:14px">
               <div><label>Parent / Guardian Name *</label><input type="text" id="ns-parent-name" placeholder="e.g., Roberto Santos" maxlength="80" autocomplete="name"/></div>
-              <div><label>Parent Contact Number * <span style="font-size:11px;color:#6B7280;font-weight:400">(for SMS attendance alerts)</span></label><input type="tel" inputmode="numeric" id="ns-parent-contact" placeholder="e.g., 09171234567" maxlength="16" autocomplete="tel"/></div>
+              <div><label>Parent Contact Number * <span style="font-size:11px;color:#6B7280;font-weight:400">(for SMS attendance alerts)</span></label><input type="tel" inputmode="numeric" data-digits id="ns-parent-contact" placeholder="e.g., 09171234567" maxlength="13" autocomplete="tel"/></div>
             </div>
           </div>
         </div>
@@ -475,7 +475,7 @@ async function enrolCreateStudent(){
   const ok=vValidate([
     [document.getElementById('ns-id'), V.idNumber(id,'ID Number')],
     [document.getElementById('ns-name'), V.name(name,'Full name')],
-    [document.getElementById('ns-email'), V.email(email)],
+    [document.getElementById('ns-email'), V.email(email,true)],
     [document.getElementById('ns-parent-name'), V.name(parentName,'Parent / Guardian name')],
     [document.getElementById('ns-parent-contact'), V.phone(parentContact,true)],
     [document.getElementById('ns-section-custom'), selVal==='__other__'?V.label(document.getElementById('ns-section-custom')?.value?.trim(),true,'Section name'):'']
@@ -485,7 +485,7 @@ async function enrolCreateStudent(){
   const password=prompt('Set an initial password (at least 8 characters) for this student:')||'';
   if(password.length<8){setEnrolAlert('error','Initial password must be at least 8 characters.');return;}
   if(!demoMode){
-    const r=await apiFetch('/users/',{method:'POST',body:JSON.stringify({id_number:id,full_name:name,email:document.getElementById('ns-email')?.value?.trim()||null,password,role:'student',section:section||null,department:dept||null,parent_name:parentName,parent_contact:parentContact})});
+    const r=await apiFetch('/users/',{method:'POST',body:JSON.stringify({id_number:id,full_name:name,email:email||null,password,role:'student',section:section||null,department:dept||null,parent_name:parentName,parent_contact:parentContact})});
     if(!r?.ok){let msg='Could not create student.';try{msg=(await r.json()).detail||msg;}catch{}setEnrolAlert('error',msg);return;}
     const saved=await r.json();backendUsers=[...backendUsers,saved];enrolState.selected={...saved,has_rfid:false,has_face:false};enrolState.step='rfid';renderEnrolInner(document.getElementById('page-enrollment'));return;
   }

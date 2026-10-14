@@ -51,7 +51,7 @@ const V = {
   phone: (v, required) => {
     const s = (v == null ? '' : String(v)).trim();
     if (!s) return required ? 'Contact number is required.' : '';
-    if (!/^(09|\+639)\d{9}$/.test(s.replace(/[\s()-]/g, ''))) return 'Enter a valid PH mobile number (e.g. 09171234567 or +639171234567).';
+    if (!/^(09\d{9}|\+?639\d{9})$/.test(s.replace(/[\s()-]/g, ''))) return 'Enter a valid PH mobile number (e.g. 09171234567 or 639171234567).';
     return '';
   },
 
@@ -165,10 +165,16 @@ function vClearAll(root) {
   scope.querySelectorAll('.v-error').forEach((n) => n.remove());
 }
 
-// Clear a field's error as soon as the user edits it again.
+// Numeric-only inputs (marked data-digits) have every non-digit stripped as it
+// is typed or pasted. A field's validation error is also cleared on edit.
 document.addEventListener('input', (e) => {
   const t = e.target;
-  if (t && t.classList && t.classList.contains('v-invalid')) vHide(t);
+  if (!t) return;
+  if (t.dataset && t.dataset.digits !== undefined) {
+    const cleaned = String(t.value || '').replace(/\D/g, '');
+    if (t.value !== cleaned) t.value = cleaned;
+  }
+  if (t.classList && t.classList.contains('v-invalid')) vHide(t);
 });
 document.addEventListener('change', (e) => {
   const t = e.target;
