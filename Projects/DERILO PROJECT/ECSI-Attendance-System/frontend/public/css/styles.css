@@ -79,7 +79,7 @@ body.mon-page-fs #mon-feed-list{max-height:none;flex:1}
 .demo-btn:hover{opacity:.85}
 
 label{display:block;font-size:11px;font-weight:600;color:var(--gray);margin-bottom:4px}
-input[type=text],input[type=password],input[type=date],select{
+input[type=text],input[type=password],input[type=date],input[type=email],input[type=number],input[type=tel],select{
   width:100%;border:1px solid #E5E7EB;border-radius:8px;padding:9px 12px;font-size:13px;
   outline:none;transition:border-color .15s,box-shadow .15s;font-family:inherit
 }
