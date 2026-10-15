@@ -19,7 +19,7 @@ services:
     # The API is nested inside the repo, one folder below "Projects".
     rootDir: Projects/DERILO PROJECT/ECSI-Attendance-System/backend
 
-    # Slim deps: no OpenCV/DeepFace/TensorFlow (Render has no camera anyway).
+    # CPU YuNet/SFace inference; the browser supplies camera frames.
     buildCommand: pip install -r requirements-render.txt
 
     # ONE worker, always. websocket/manager.py keeps connected clients in
@@ -36,7 +36,7 @@ services:
 
     envVars:
       - key: PYTHON_VERSION
-        value: "3.13.5"
+        value: "3.12.8"
       - key: ENVIRONMENT
         value: production
       - key: DEBUG
@@ -87,9 +87,8 @@ services:
       - key: CORS_ORIGIN_REGEX
         value: ^https://[a-z0-9-]+\.vercel\.app$
 
-      # Master switch for the DeepFace/TensorFlow pipeline. Set to "false" to
-      # skip importing the heavy AI stack at runtime (faster startup, no
-      # TensorFlow/CUDA log spam). Face enrollment then returns 503 and RFID
+      # Master switch for the OpenCV YuNet/SFace pipeline. Set to "false" to
+      # disable biometric enrollment and verification. Face enrollment then returns 503 and RFID
       # taps are still captured and queued as PENDING_REVIEW.
       - key: FACE_PIPELINE_ENABLED
         value: "true"
