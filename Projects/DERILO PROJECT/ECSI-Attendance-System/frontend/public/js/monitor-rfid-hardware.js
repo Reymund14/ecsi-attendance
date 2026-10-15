@@ -214,6 +214,8 @@ function _dispatchHwRfid(rawUid){
     }
     return;
   }
-  _monApplyRfidTap(u, uid, isGhost);
+  // Send the canonical value returned by the API. Hardware readers may emit
+  // the same card as raw hex while the database stores colon-separated bytes.
+  _monApplyRfidTap(u, isGhost ? uid : (u.rfid_uid || uid), isGhost);
 }
 

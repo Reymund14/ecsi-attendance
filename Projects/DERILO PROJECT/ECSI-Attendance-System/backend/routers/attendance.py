@@ -7,7 +7,7 @@ import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,8 +15,8 @@ from sqlalchemy.orm import selectinload
 from config import settings
 from database import get_db
 from middleware.rbac import get_current_user, require_faculty_or_above, require_super_admin
-from models.attendance import AttendanceRecord, AttendanceStatus, ProxyAuditLog
-from models.user import User, UserRole
+from models.attendance import AttendanceRecord, AttendanceStatus, CheckType, ProxyAuditLog
+from models.user import RFIDCard, User, UserRole
 from schemas.attendance import AttendanceOut, AttendanceOverrideRequest, CaptureAccessOut
 from services import storage
 from services.face_service import FaceService, face_pipeline_available
@@ -31,6 +31,9 @@ logger = logging.getLogger("ecsi.attendance.router")
 async def verify_live_face(
     user_id: uuid.UUID,
     frame: UploadFile = File(...),
+    card_uid: str = Form(..., min_length=4, max_length=64),
+    check_type: CheckType = Form(CheckType.TIME_IN),
+    terminal_id: str = Form("Terminal-1", max_length=64),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_faculty_or_above),
 ):
@@ -44,6 +47,18 @@ async def verify_live_face(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
+    if current_user.role == UserRole.FACULTY and user.section != current_user.section:
+        raise HTTPException(status_code=403, detail="You cannot record attendance for this student.")
+    card_result = await db.execute(
+        select(RFIDCard).where(
+            RFIDCard.user_id == user.id,
+            RFIDCard.card_uid == card_uid,
+            RFIDCard.is_active.is_(True),
+        )
+    )
+    card = card_result.scalar_one_or_none()
+    if not card:
+        raise HTTPException(status_code=409, detail="This RFID card is not assigned to this user.")
     if not user.face_embedding:
         raise HTTPException(status_code=409, detail="No face template is enrolled for this user.")
     if user.face_embedding.model_name != face_service.model_name or len(user.face_embedding.embedding_vector) != face_service.embedding_dimensions:
@@ -65,7 +80,63 @@ async def verify_live_face(
     except Exception as exc:
         logger.exception("Face verification failed for %s", user.id_number)
         raise HTTPException(status_code=503, detail="Face verification failed; attendance was not recorded.") from exc
-    return {"matched": matched, "cosine_distance": distance}
+    status = AttendanceStatus.VERIFIED if matched else AttendanceStatus.PROXY_ANOMALY
+    record = AttendanceRecord(
+        user_id=user.id,
+        user=user,
+        card_uid_used=card.card_uid,
+        status=status,
+        check_type=check_type,
+        cosine_distance=distance,
+        terminal_id=terminal_id,
+    )
+    db.add(record)
+    await db.flush()
+    await db.refresh(record)
+
+    if not matched:
+        db.add(ProxyAuditLog(
+            attendance_record_id=record.id,
+            cosine_distance=distance,
+            card_uid=card.card_uid,
+            registered_user_id=user.id,
+            terminal_id=terminal_id,
+        ))
+        await db.flush()
+
+    await db.commit()
+    event = {
+        "event": "attendance_update",
+        "record_id": str(record.id),
+        "user_id": str(user.id),
+        "full_name": user.full_name,
+        "id_number": user.id_number,
+        "profile_photo_path": user.profile_photo_path,
+        "status": status.value,
+        "check_type": check_type.value,
+        "cosine_distance": distance,
+        "terminal_id": terminal_id,
+        "captured_frame_path": None,
+        "timestamp": record.timestamp.isoformat(),
+    }
+    await ws_manager.broadcast_admin_faculty(event)
+    if not matched:
+        await ws_manager.broadcast_admin_only({
+            "event": "proxy_alert",
+            "message": f"Proxy attempt detected for {user.full_name}.",
+            "card_uid": card.card_uid,
+            "registered_user_name": user.full_name,
+            "cosine_distance": distance,
+            "intruder_image_path": None,
+            "terminal_id": terminal_id,
+            "detected_at": record.timestamp.isoformat(),
+        })
+
+    return {
+        "matched": matched,
+        "cosine_distance": distance,
+        "record": _build_attendance_out(record),
+    }
 
 
 def _build_attendance_out(record: AttendanceRecord) -> AttendanceOut:

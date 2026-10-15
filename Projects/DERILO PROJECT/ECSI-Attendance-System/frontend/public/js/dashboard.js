@@ -114,7 +114,7 @@ function refreshFeed(){
   let items=feedItems;
   if(currentUser?.role==='faculty'){
     const advisorySections=getFacultyAdvisorySections(currentUser);
-    items=feedItems.filter(ev=>isInAdvisoryClass(ev,advisorySections));
+    items=feedItems.filter(ev=>ev.status==='unregistered_rfid'||isInAdvisoryClass(ev,advisorySections));
   }
   if(cnt) cnt.textContent=items.length+' event'+(items.length!==1?'s':'');
   const previousFeedKeys=prepareFeedRender(el,items,100);if(previousFeedKeys===null)return;

@@ -250,7 +250,7 @@ function _monRunFaceAuth(student, uid, checkType){
     if(tok!==_pipelineToken) return; // re-check after await
     const result=demoMode
       ? simFaceMatch(student, liveFeatures)
-      : await verifyFaceFrame(student, _capturedAuthFrame);
+      : await verifyFaceFrame(student, _capturedAuthFrame, uid, checkType);
     if(tok!==_pipelineToken) return;
     // Liveness check: 0% failure for enrolled-photo users; 3% for pre-seeded
     const livenessOk=demoMode ? (student.face_photo ? true : Math.random()>0.03) : true;
@@ -288,11 +288,11 @@ function _monRunFaceAuth(student, uid, checkType){
       // ✅ Steps 6–7: Verified + timestamp recorded + parent notified
       recordCheckType(student.id_number, checkType);
       _recordTap(student.id_number);
-      const ev={full_name:student.full_name,id_number:student.id_number,status:'verified',
+      const ev=result.record||{full_name:student.full_name,id_number:student.id_number,status:'verified',
         check_type:checkType,cosine_distance:result.cosine,terminal_id:'Terminal-1',
         timestamp:now.toISOString(),rfid_uid:uid,section:student.section||student.department||''};
-      feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-      refreshFeed(); refreshMonFeed();
+      if(result.record) upsertMonitorFeedRecord(ev);
+      else {feedItems.unshift(ev);if(feedItems.length>100)feedItems.pop();refreshFeed();refreshMonFeed();}
       const isIn=checkType==='time_in';
       monSetCamOverlay('verified_inout', {...result, checkType, student});
       if(badge){badge.textContent=isIn?'✅ Time IN':'🔴 Time OUT';badge.style.cssText=`font-size:10px;padding:3px 8px;border-radius:99px;background:${isIn?'#D1FAE5':'#FEE2E2'};color:${isIn?'#065F46':'#991B1B'}`;}
@@ -301,6 +301,7 @@ function _monRunFaceAuth(student, uid, checkType){
 
     } else {
       // Step 5 FAIL: face mismatch — BLOCK time in/out, do NOT record attendance
+      if(result.record) upsertMonitorFeedRecord(result.record);
       monSetCamOverlay('proxy', result);
       if(badge){badge.textContent='🚫 Mismatch';badge.style.cssText='font-size:10px;padding:3px 8px;border-radius:99px;background:#FEE2E2;color:#991B1B';}
       _monWarnToast('face_mismatch',

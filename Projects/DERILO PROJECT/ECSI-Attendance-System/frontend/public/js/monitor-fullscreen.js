@@ -418,7 +418,7 @@ function fsTapRfid(){
       if(fsTok!==_pipelineToken) return;
       const result=demoMode
         ? simFaceMatch(u, liveFeatures)
-        : await verifyFaceFrame(u, fsCapturedFrame);
+        : await verifyFaceFrame(u, fsCapturedFrame, uid, checkType);
       if(fsTok!==_pipelineToken) return;
       // pass fsCapturedFrame through closure
       fsAuthState='face_done';
@@ -438,11 +438,11 @@ function fsTapRfid(){
       } else if(result.matched){
         recordCheckType(u.id_number, checkType);
         _recordTap(u.id_number);
-        const ev={full_name:u.full_name,id_number:u.id_number,status:'verified',
+        const ev=result.record||{full_name:u.full_name,id_number:u.id_number,status:'verified',
           check_type:checkType,cosine_distance:result.cosine,terminal_id:'Terminal-1',
           timestamp:now.toISOString(),rfid_uid:uid,section:u.section||u.department||''};
-        feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-        refreshFeed(); refreshMonFeed(); fsFeedRefresh();
+        if(result.record) upsertMonitorFeedRecord(ev);
+        else {feedItems.unshift(ev);if(feedItems.length>100)feedItems.pop();refreshFeed();refreshMonFeed();fsFeedRefresh();}
         fsSetCamOverlay('verified_inout',{...result,checkType,student:u});
         const isIn=checkType==='time_in';
         if(badge){badge.textContent=isIn?'✅ Time IN':'🔴 Time OUT';badge.style.color=isIn?'#41A638':'#DC2626';}
@@ -451,6 +451,7 @@ function fsTapRfid(){
 
       } else {
         // Face mismatch — BLOCK time in/out, do NOT record attendance
+        if(result.record) upsertMonitorFeedRecord(result.record);
         fsSetCamOverlay('proxy',result);
         if(badge){badge.textContent='🚫 Mismatch';badge.style.color='#EF4444';}
         _monWarnToast('face_mismatch',

@@ -14,6 +14,23 @@ function connectWS(){
         const d=JSON.parse(e.data);
         if(d.event==='connected'||d.event==='heartbeat') return;
         if(d.event==='auth_error'){setWsBadge('offline');return;}
+        if(d.event==='unknown_card'||d.event==='unregistered_rfid'){
+          const timestamp=d.timestamp||new Date().toISOString();
+          const uid=d.card_uid||'';
+          const event={
+            id:`unknown:${uid}:${timestamp}`,
+            full_name:'Unknown RFID Card',
+            label:'Unknown RFID Card',
+            id_number:'',
+            status:'unregistered_rfid',
+            terminal_id:d.terminal_id||'Terminal-1',
+            detail:uid?`UID: ${uid} — not found in database`:'Card not found in database',
+            timestamp,
+          };
+          feedItems=[event,...feedItems].slice(0,100);
+          refreshFeed();refreshMonFeed();
+          if(typeof fsFeedRefresh==='function') fsFeedRefresh();
+        }
         if(d.event==='attendance_update'){
           const id=d.record_id||d.id;
           const event={...d,id,record_id:id};

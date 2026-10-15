@@ -135,8 +135,9 @@ function renderMonitor(el){
 
   // Set WS badge
   setMonBadge(demoMode?'demo':wsConn?.readyState===1?'live':'offline');
-  refreshMonFeed();
-  monitorFeedInterval=setInterval(refreshMonFeed,2000);
+  clearInterval(monitorFeedInterval);
+  loadMonitorFeed();
+  monitorFeedInterval=setInterval(loadMonitorFeed,10000);
 }
 
 function setMonBadge(state){
@@ -185,6 +186,28 @@ function refreshMonFeed(){
       ${badgeHtml(ev.status)}</div>`;
   }).join('');
   finishFeedRender(el,previousFeedKeys);
+}
+
+async function loadMonitorFeed(){
+  if(demoMode) { refreshMonFeed(); return; }
+  const response=await apiFetch('/attendance?page_size=30');
+  if(!response?.ok) return;
+  const records=await response.json();
+  feedItems=records;
+  backendAttendance=records;
+  refreshFeed();
+  refreshMonFeed();
+  if(typeof fsFeedRefresh==='function') fsFeedRefresh();
+}
+
+function upsertMonitorFeedRecord(record){
+  if(!record?.id&&!record?.record_id) return;
+  const id=record.id||record.record_id;
+  feedItems=[record,...feedItems.filter(item=>(item.id||item.record_id)!==id)].slice(0,100);
+  backendAttendance=[record,...backendAttendance.filter(item=>(item.id||item.record_id)!==id)].slice(0,500);
+  refreshFeed();
+  refreshMonFeed();
+  if(typeof fsFeedRefresh==='function') fsFeedRefresh();
 }
 
 // ── Camera ──────────────────────────────────────────────────
@@ -566,22 +589,29 @@ async function checkCameraFace(frameDataUrl){
   return window.detectFaceInFrame(frameDataUrl);
 }
 
-async function verifyFaceFrame(student, frameDataUrl){
+async function verifyFaceFrame(student, frameDataUrl, cardUid, checkType){
   if(demoMode) return simFaceMatch(student, await extractImageFeatures(frameDataUrl));
   if(!frameDataUrl) return {matched:false,student,cosine:null,status:'proxy_anomaly'};
   try{
     const frameBlob=await (await fetch(frameDataUrl)).blob();
     const form=new FormData();
     form.append('frame',frameBlob,'attendance-frame.jpg');
+    form.append('card_uid',cardUid||student.rfid_uid||'');
+    form.append('check_type',checkType||'time_in');
+    form.append('terminal_id','Terminal-1');
     const response=await apiFetch(`/attendance/verify-face/${encodeURIComponent(student.id)}`,{method:'POST',body:form});
     if(response?.status===409){
       const body=await response.json().catch(()=>({}));
-      const legacy=String(body.detail||'').toLowerCase().includes('old arcface');
-      return {matched:false,student,cosine:null,status:legacy?'legacy_face_template':'no_face_template'};
+      const detail=String(body.detail||'');
+      const normalized=detail.toLowerCase();
+      if(normalized.includes('old arcface')) return {matched:false,student,cosine:null,status:'legacy_face_template',detail};
+      if(normalized.includes('no face template')) return {matched:false,student,cosine:null,status:'no_face_template',detail};
+      return {matched:false,student,cosine:null,status:'verification_unavailable',detail};
     }
     if(!response?.ok) return {matched:false,student,cosine:null,status:'verification_unavailable'};
     const result=await response.json();
-    return {matched:result.matched===true,student,cosine:result.cosine_distance,status:result.matched?'verified':'proxy_anomaly'};
+    if(!result.record) return {matched:false,student,cosine:null,status:'verification_unavailable'};
+    return {matched:result.matched===true,student,cosine:result.cosine_distance,status:result.matched?'verified':'proxy_anomaly',record:result.record};
   }catch{
     return {matched:false,student,cosine:null,status:'proxy_anomaly'};
   }
