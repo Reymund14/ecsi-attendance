@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -155,6 +155,7 @@ async def list_attendance(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     status: Optional[AttendanceStatus] = None,
+    exclude_seeded: bool = Query(False, description="Exclude placeholder attendance rows created by seed.py."),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -187,6 +188,16 @@ async def list_attendance(
         stmt = stmt.where(AttendanceRecord.timestamp <= datetime.combine(date_to, datetime.max.time()))
     if status:
         stmt = stmt.where(AttendanceRecord.status == status)
+    if exclude_seeded:
+        # seed.py stores placeholder captures as verified/YYYY-MM-DD_ID_ORDINAL.jpg.
+        # Real capture keys use a UUID and timestamp; live browser verification
+        # currently stores no capture path. Keep seeded rows in history/reports,
+        # but let live feeds omit them without deleting database data.
+        seed_capture_pattern = "verified/____-__-__%"
+        stmt = stmt.where(or_(
+            AttendanceRecord.captured_frame_path.is_(None),
+            ~AttendanceRecord.captured_frame_path.like(seed_capture_pattern),
+        ))
 
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
