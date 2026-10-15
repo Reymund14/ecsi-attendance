@@ -13,7 +13,7 @@ const NAV={
 };
 
 async function refreshBackendData(){
-  const [users,attendance,notifications,excuses]=await Promise.all([apiFetchAll('/users/',100),apiFetchAll('/attendance',200),apiFetch('/notifications/'),apiFetch('/excuses/')]);
+  const [users,attendance,notifications,excuses]=await Promise.all([apiFetchAll('/users/',100),apiFetchAll('/attendance/',200),apiFetch('/notifications/'),apiFetch('/excuses/')]);
   if(users) backendUsers=users;
   if(attendance){backendAttendance=attendance;feedItems=attendance.slice(0,100).map(row=>({...row,record_id:row.id||row.record_id,event:'attendance_update'}));}
   if(notifications?.ok) backendNotifications=await notifications.json();

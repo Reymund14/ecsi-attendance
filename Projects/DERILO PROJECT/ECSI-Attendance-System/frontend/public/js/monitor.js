@@ -190,7 +190,7 @@ function refreshMonFeed(){
 
 async function loadMonitorFeed(){
   if(demoMode) { refreshMonFeed(); return; }
-  const response=await apiFetch('/attendance?page_size=30');
+  const response=await apiFetch('/attendance/?page_size=30');
   if(!response?.ok) return;
   const records=await response.json();
   feedItems=records;

@@ -136,7 +136,7 @@ function renderReports(el){
 }
 
 async function loadReportData(){
-  const [records,users]=await Promise.all([apiFetchAll('/attendance',200),apiFetchAll('/users/',100)]);
+  const [records,users]=await Promise.all([apiFetchAll('/attendance/',200),apiFetchAll('/users/',100)]);
   if(!records) return;
   backendAttendance=records;
   if(users) backendUsers=users;

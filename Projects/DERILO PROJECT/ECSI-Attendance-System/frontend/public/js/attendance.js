@@ -81,7 +81,7 @@ async function loadAttendance(myOnly){
     const params=new URLSearchParams({page_size:50});
     if(from) params.set('date_from',from);
     if(to) params.set('date_to',to);
-    const r=await apiFetch('/attendance?'+params);
+    const r=await apiFetch('/attendance/?'+params);
     if(!r||!r.ok){tbody.innerHTML=`<tr class="empty-row"><td colspan="${cols}">Failed to load.</td></tr>`;return;}
     recs=await r.json();
     backendAttendance=recs;
