@@ -192,7 +192,7 @@ async function loadMonitorFeed(){
   if(demoMode) { refreshMonFeed(); return; }
   const response=await apiFetch('/attendance/?page_size=30');
   if(!response?.ok) return;
-  const records=await response.json();
+  const records=(await response.json()).filter(record=>!isSeededAttendanceRecord(record));
   feedItems=records;
   backendAttendance=records;
   refreshFeed();

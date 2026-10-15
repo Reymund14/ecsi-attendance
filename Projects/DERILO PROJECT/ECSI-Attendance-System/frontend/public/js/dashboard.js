@@ -94,6 +94,11 @@ async function loadStats(){
     {label:'Enrolled Users', value:d.total_users,         color:'#3B82F6'},
   ].map(s=>`<div class="stat-card"><div class="stat-label">${s.label}</div><div class="stat-value" style="color:${s.color}">${s.value}</div></div>`).join('');
 }
+function isSeededAttendanceRecord(ev){
+  // seed.py uses a date + school ID + ordinal as a placeholder capture key.
+  // Real capture keys use a user UUID/timestamp; browser face scans have null.
+  return /^verified\/\d{4}-\d{2}-\d{2}_[^/]+_\d+\.jpg$/i.test(ev?.captured_frame_path||'');
+}
 function feedItemKey(ev){return String(ev.record_id||ev.id||`${ev.id_number||''}:${ev.timestamp||''}:${ev.status||''}`);}
 function prepareFeedRender(el,items,limit){
   const visible=items.slice(0,limit);
