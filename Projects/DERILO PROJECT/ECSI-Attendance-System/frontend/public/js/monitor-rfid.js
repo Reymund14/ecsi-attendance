@@ -15,20 +15,7 @@ function monitorTapRfid(){
     uid=u?.rfid_uid||'';
     if(!u||!uid||u.status!=='active'){isGhost=true;u=null;uid=GHOST_UIDS[0];}
   } else {
-    // Random: 10% ghost, 90% pick a real card from MOCK.rfidCards registry
-    isGhost=Math.random()<0.10;
-    if(isGhost){
-      uid=GHOST_UIDS[Math.floor(Math.random()*GHOST_UIDS.length)];
-    } else {
-      const uids=Object.keys(MOCK.rfidCards);
-      if(!uids.length){isGhost=true;uid=GHOST_UIDS[0];}
-      else{
-        uid=uids[Math.floor(Math.random()*uids.length)];
-        const userId=MOCK.rfidCards[uid];
-        u=appUsers().find(x=>x.id===userId&&x.status==='active');
-        if(!u) isGhost=true;
-      }
-    }
+    ({user:u,uid,isGhost}=pickRandomMonitorCard());
   }
 
   // ── Hard minimum: 5s between ANY tap (even direction changes) ──────────────
@@ -91,8 +78,7 @@ function _monApplyRfidTap(u, uid, isGhost){
       status:'unregistered_rfid',terminal_id:'Terminal-1',
       detail:'UID: '+uid+' — not found in database',
       timestamp:new Date().toISOString()};
-    feedItems.unshift(warnEv); if(feedItems.length>100) feedItems.pop();
-    refreshFeed(); refreshMonFeed();
+    addMonitorLocalEvent(warnEv);
 
     // Warning toast — top of screen
     _monWarnToast('unregistered_rfid', 'UID: '+uid+' is not linked to any account. Login process stopped.');
@@ -133,8 +119,7 @@ function _monRunFaceAuth(student, uid, checkType){
       status:'no_face_template',check_type:checkType,terminal_id:'Terminal-1',
       timestamp:now.toISOString(),rfid_uid:uid,section:student.section||student.department||'',
       detail:'Face not enrolled'};
-    feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-    refreshFeed(); refreshMonFeed();
+    addMonitorLocalEvent(ev);
     _monWarnToast('no_face',
       `${student.full_name} (${student.id_number}) has no face template. Enroll face first. Time-in denied.`);
     setTimeout(()=>{_monResetRfid();authState='idle';if(tapBtn)tapBtn.disabled=false;monSetCamOverlay('idle');},3500);
@@ -155,8 +140,7 @@ function _monRunFaceAuth(student, uid, checkType){
       status:'no_face_template',check_type:checkType,terminal_id:'Terminal-1',
       timestamp:now.toISOString(),rfid_uid:uid,section:student.section||student.department||'',
       detail:'Camera offline — login blocked'};
-    feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-    refreshFeed(); refreshMonFeed();
+    addMonitorLocalEvent(ev);
     _monWarnToast('no_cam',
       `Start the camera before tapping the RFID card. Face authentication is required for ${student.full_name}.`);
     setTimeout(()=>{_monResetRfid();authState='idle';if(tapBtn)tapBtn.disabled=false;},3500);
@@ -267,8 +251,7 @@ function _monRunFaceAuth(student, uid, checkType){
       const ev={full_name:student.full_name,id_number:student.id_number,status:'no_face_template',
         check_type:checkType,terminal_id:'Terminal-1',timestamp:now.toISOString(),
         rfid_uid:uid,section:student.section||student.department||'',detail:templateMessage};
-      feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-      refreshFeed(); refreshMonFeed();
+      addMonitorLocalEvent(ev);
       _monWarnToast('no_face', templateMessage);
 
     } else if(!livenessOk){
@@ -279,8 +262,7 @@ function _monRunFaceAuth(student, uid, checkType){
         terminal_id:'Terminal-1',timestamp:now.toISOString(),rfid_uid:uid,
         detail:'Liveness check failed — possible photo spoof',
         section:student.section||student.department||''};
-      feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-      refreshFeed(); refreshMonFeed();
+      addMonitorLocalEvent(ev);
       _monWarnToast('face_mismatch',
         `Liveness check failed for ${student.full_name}. Possible photo or screen spoof detected. Login blocked.`);
 
@@ -292,7 +274,7 @@ function _monRunFaceAuth(student, uid, checkType){
         check_type:checkType,cosine_distance:result.cosine,terminal_id:'Terminal-1',
         timestamp:now.toISOString(),rfid_uid:uid,section:student.section||student.department||''};
       if(result.record) upsertMonitorFeedRecord(ev);
-      else {feedItems.unshift(ev);if(feedItems.length>100)feedItems.pop();refreshFeed();refreshMonFeed();}
+      else addMonitorLocalEvent(ev);
       const isIn=checkType==='time_in';
       monSetCamOverlay('verified_inout', {...result, checkType, student});
       if(badge){badge.textContent=isIn?'✅ Time IN':'🔴 Time OUT';badge.style.cssText=`font-size:10px;padding:3px 8px;border-radius:99px;background:${isIn?'#D1FAE5':'#FEE2E2'};color:${isIn?'#065F46':'#991B1B'}`;}

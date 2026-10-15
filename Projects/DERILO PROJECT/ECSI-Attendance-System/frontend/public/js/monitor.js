@@ -210,6 +210,29 @@ function upsertMonitorFeedRecord(record){
   if(typeof fsFeedRefresh==='function') fsFeedRefresh();
 }
 
+function addMonitorLocalEvent(event){
+  // Live attendance feeds contain backend records and backend WebSocket events
+  // only. Local simulation entries belong to Demo Mode.
+  if(!demoMode) return;
+  feedItems.unshift(event);
+  if(feedItems.length>100) feedItems.pop();
+  refreshFeed();
+  refreshMonFeed();
+  if(typeof fsFeedRefresh==='function') fsFeedRefresh();
+}
+
+function pickRandomMonitorCard(){
+  const registered=appUsers().filter(user=>user.status==='active'&&user.has_rfid&&user.rfid_uid);
+  if(demoMode&&Math.random()<0.10){
+    return {user:null,uid:GHOST_UIDS[Math.floor(Math.random()*GHOST_UIDS.length)],isGhost:true};
+  }
+  if(!registered.length){
+    return {user:null,uid:GHOST_UIDS[0],isGhost:true};
+  }
+  const user=registered[Math.floor(Math.random()*registered.length)];
+  return {user,uid:user.rfid_uid,isGhost:false};
+}
+
 // ── Camera ──────────────────────────────────────────────────
 async function monitorStartCam(){
   const errEl=document.getElementById('cam-error');

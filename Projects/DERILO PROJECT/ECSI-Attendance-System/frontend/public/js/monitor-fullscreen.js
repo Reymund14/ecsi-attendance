@@ -297,19 +297,7 @@ function fsTapRfid(){
     uid=u?.rfid_uid||'';
     if(!u||!uid||u.status!=='active'){isGhost=true;u=null;uid=GHOST_UIDS[0];}
   } else {
-    isGhost=Math.random()<0.10;
-    if(isGhost){
-      uid=GHOST_UIDS[Math.floor(Math.random()*GHOST_UIDS.length)];
-    } else {
-      const uids=Object.keys(MOCK.rfidCards);
-      if(!uids.length){isGhost=true;uid=GHOST_UIDS[0];}
-      else{
-        uid=uids[Math.floor(Math.random()*uids.length)];
-        const userId=MOCK.rfidCards[uid];
-        u=appUsers().find(x=>x.id===userId&&x.status==='active');
-        if(!u) isGhost=true;
-      }
-    }
+    ({user:u,uid,isGhost}=pickRandomMonitorCard());
   }
 
   // Hard minimum: 5s between ANY tap
@@ -429,8 +417,7 @@ function fsTapRfid(){
         const ev={full_name:u.full_name,id_number:u.id_number,status:'no_face_template',
           check_type:checkType,terminal_id:'Terminal-1',timestamp:now.toISOString(),
           rfid_uid:uid,section:u.section||u.department||''};
-        feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
-        refreshFeed(); refreshMonFeed(); fsFeedRefresh();
+        addMonitorLocalEvent(ev);
         fsSetCamOverlay('no_face',result);
         if(badge&&result.status==='legacy_face_template') badge.textContent='Re-enroll face';
         if(badge){badge.textContent='No template';badge.style.color='#F59E0B';}
@@ -442,7 +429,7 @@ function fsTapRfid(){
           check_type:checkType,cosine_distance:result.cosine,terminal_id:'Terminal-1',
           timestamp:now.toISOString(),rfid_uid:uid,section:u.section||u.department||''};
         if(result.record) upsertMonitorFeedRecord(ev);
-        else {feedItems.unshift(ev);if(feedItems.length>100)feedItems.pop();refreshFeed();refreshMonFeed();fsFeedRefresh();}
+        else addMonitorLocalEvent(ev);
         fsSetCamOverlay('verified_inout',{...result,checkType,student:u});
         const isIn=checkType==='time_in';
         if(badge){badge.textContent=isIn?'✅ Time IN':'🔴 Time OUT';badge.style.color=isIn?'#41A638':'#DC2626';}

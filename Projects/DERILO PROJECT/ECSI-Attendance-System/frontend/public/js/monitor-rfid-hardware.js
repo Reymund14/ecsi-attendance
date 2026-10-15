@@ -153,7 +153,7 @@ function _dispatchHwRfid(rawUid){
   u=appUsers().find(x=>x.rfid_uid&&(x.rfid_uid.toUpperCase()===uid||x.rfid_uid.toUpperCase()===rawUid.toUpperCase()));
   if(!u){
     // Try registry map
-    const userId=MOCK.rfidCards[uid]||MOCK.rfidCards[rawUid.toUpperCase()];
+    const userId=demoMode?(MOCK.rfidCards[uid]||MOCK.rfidCards[rawUid.toUpperCase()]):null;
     if(userId) u=appUsers().find(x=>x.id===userId&&x.status==='active');
   }
 
@@ -199,8 +199,7 @@ function _dispatchHwRfid(rawUid){
       const warnEv={full_name:'Unknown RFID Card',label:'Unknown RFID Card',id_number:'',
         status:'unregistered_rfid',terminal_id:'Terminal-1',
         detail:'UID: '+uid+' — not found in database',timestamp:new Date().toISOString()};
-      feedItems.unshift(warnEv); if(feedItems.length>100) feedItems.pop();
-      refreshFeed();
+      addMonitorLocalEvent(warnEv);
       setTimeout(()=>{
         fsAuthState='idle'; fsRfidReset();
         if(fsCamStream) fsSetCamOverlay('idle');
