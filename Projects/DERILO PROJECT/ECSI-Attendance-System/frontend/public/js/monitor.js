@@ -560,33 +560,10 @@ async function captureCameraFrame(vid, timeoutMs=1500){
   return null;
 }
 
-// Lightweight face-presence heuristic retained as a quick camera-frame gate.
-function detectFaceInFrame(vid){
-  if(!vid) return {ok:false,reason:'no_video'};
-  const W=32,H=32;
-  const canvas=document.createElement('canvas'); canvas.width=W; canvas.height=H;
-  const ctx=canvas.getContext('2d');
-  if(!ctx) return {ok:false,reason:'no_content'};
-  ctx.drawImage(vid,0,0,W,H);
-  const pixels=ctx.getImageData(0,0,W,H).data;
-  let brightness=0;
-  for(let i=0;i<pixels.length;i+=4) brightness+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
-  const average=brightness/(W*H);
-  if(average<30) return {ok:false,reason:'too_dark'};
-  let variance=0;
-  for(let i=0;i<pixels.length;i+=4){const gray=(pixels[i]+pixels[i+1]+pixels[i+2])/3;variance+=(gray-average)**2;}
-  if(variance/(W*H)<350) return {ok:false,reason:'no_content'};
-  let skin=0,total=0;
-  const cx=W/2,cy=H/2,radius=W/3;
-  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
-    const dx=x-cx,dy=y-cy;
-    if(dx*dx+dy*dy>radius*radius) continue;
-    total++;
-    const i=(y*W+x)*4,red=pixels[i],green=pixels[i+1],blue=pixels[i+2];
-    if(red>60&&red>green&&green>blue*0.6&&red-blue>20) skin++;
-  }
-  if(total&&skin/total<0.12) return {ok:false,reason:'no_face'};
-  return {ok:true};
+async function checkCameraFace(frameDataUrl){
+  if(!frameDataUrl) return {ok:false,reason:'no_video'};
+  if(typeof window.detectFaceInFrame!=='function') return {ok:false,reason:'detector_unavailable'};
+  return window.detectFaceInFrame(frameDataUrl);
 }
 
 async function verifyFaceFrame(student, frameDataUrl){

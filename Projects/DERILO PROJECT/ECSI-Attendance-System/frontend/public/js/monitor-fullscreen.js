@@ -386,7 +386,7 @@ function fsTapRfid(){
       const fsVid=document.getElementById('fs-video');
       const fsCapturedFrame=fsVid&&fsCamStream ? await captureCameraFrame(fsVid) : null;
       if(fsTok!==_pipelineToken) return;
-      const _fsFaceCheck=fsVid ? detectFaceInFrame(fsVid) : {ok:false,reason:'no_video'};
+      const _fsFaceCheck=await checkCameraFace(fsCapturedFrame);
       if(!fsCapturedFrame || !_fsFaceCheck.ok){
         _pipelineToken++; // cancel step B
         fsAuthState='face_done';

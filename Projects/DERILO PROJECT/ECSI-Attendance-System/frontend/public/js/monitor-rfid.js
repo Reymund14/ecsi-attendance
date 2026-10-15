@@ -205,7 +205,7 @@ function _monRunFaceAuth(student, uid, checkType){
     if(tok!==_pipelineToken) return;
     if(badge){badge.textContent='Step 3 · Capturing…';badge.style.cssText='font-size:10px;padding:3px 8px;border-radius:99px;background:#F3F4F6;color:#374151';}
 
-    const _faceCheck=vid ? detectFaceInFrame(vid) : {ok:false,reason:'no_video'};
+    const _faceCheck=await checkCameraFace(_capturedAuthFrame);
     if(!_capturedAuthFrame || !_faceCheck.ok){
       _abortPipeline(
         'no_face_in_frame', student,
