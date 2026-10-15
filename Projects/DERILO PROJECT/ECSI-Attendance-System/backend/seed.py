@@ -187,8 +187,8 @@ def password_for(role: UserRole, id_number: str) -> str:
     return "Student@1234"
 
 
-def fake_embedding(user_id: str, dims: int = 512) -> list:
-    """Deterministic pseudo-random unit-ish vector standing in for an ArcFace embedding."""
+def fake_embedding(user_id: str, dims: int = 128) -> list:
+    """Deterministic pseudo-random unit-ish vector for demo seed data."""
     rng = random.Random(user_id)
     vec = [rng.gauss(0.0, 1.0) for _ in range(dims)]
     norm = math.sqrt(sum(v * v for v in vec)) or 1.0

@@ -1,236 +1,177 @@
-"""
-Face Service — AI Biometrics Pipeline
-Uses DeepFace with ArcFace model for 512-dim embedding extraction.
-Cosine distance threshold: <= 0.40 → MATCH (positive identity).
-"""
+"""OpenCV YuNet face detection and SFace face embeddings."""
 
-import io
 import logging
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 from config import settings
 
-if TYPE_CHECKING:  # numpy only needed for type hints
-    import numpy as np
-
 logger = logging.getLogger("ecsi.face")
 
-# OpenCV, NumPy and DeepFace are imported lazily. The cloud deployment (Render)
-# serves the dashboard / auth / CRUD paths only and does NOT install the ~1GB
-# computer-vision stack, so these must not be required at import time.
+MODEL_DIR = Path(__file__).resolve().parents[1] / "model_weights"
+YUNET_MODEL = MODEL_DIR / "face_detection_yunet_2023mar.onnx"
+SFACE_MODEL = MODEL_DIR / "face_recognition_sface_2021dec.onnx"
+
 _CV = None
 _NP = None
-_DEEPFACE = None
-_DEEPFACE_IMPORT_FAILED = False
+_DETECTOR = None
+_RECOGNIZER = None
 
 
 def _cv():
-    """Import cv2 on first use. Raises RuntimeError with an actionable message."""
     global _CV
     if _CV is None:
         try:
             import cv2
         except ImportError as exc:
-            raise RuntimeError(
-                "OpenCV is not installed. Face enrollment/verification is unavailable. "
-                "Install the CV extras: pip install -r requirements.txt"
-            ) from exc
+            raise RuntimeError("OpenCV is required for face detection and recognition.") from exc
+        if not hasattr(cv2, "FaceDetectorYN") or not hasattr(cv2, "FaceRecognizerSF"):
+            raise RuntimeError("OpenCV 4.5.4 or newer with YuNet and SFace support is required.")
         _CV = cv2
     return _CV
 
 
 def _np():
-    """Import numpy on first use. Raises RuntimeError with an actionable message."""
     global _NP
     if _NP is None:
         try:
             import numpy
         except ImportError as exc:
-            raise RuntimeError(
-                "NumPy is not installed. Face enrollment/verification is unavailable. "
-                "Install the CV extras: pip install -r requirements.txt"
-            ) from exc
+            raise RuntimeError("NumPy is required for face embeddings.") from exc
         _NP = numpy
     return _NP
 
 
-def _deepface():
-    """
-    Import DeepFace on first use. Returns None when unavailable so callers can
-    degrade gracefully instead of crashing.
-    """
-    global _DEEPFACE, _DEEPFACE_IMPORT_FAILED
-    if _DEEPFACE is None and not _DEEPFACE_IMPORT_FAILED:
-        # Honour the operator switch first: when disabled we must not touch
-        # TensorFlow at all, otherwise the import banner and CUDA probes fire
-        # regardless of host hardware.
-        if not settings.FACE_PIPELINE_ENABLED:
-            _DEEPFACE_IMPORT_FAILED = True
-            logger.info(
-                "FACE_PIPELINE_ENABLED=false — skipping DeepFace/TensorFlow import; "
-                "face verification is unavailable on this instance."
-            )
-            return None
-        try:
-            from deepface import DeepFace
-            _DEEPFACE = DeepFace
-        except ImportError:
-            _DEEPFACE_IMPORT_FAILED = True
-            logger.warning(
-                "DeepFace not installed — face verification will be unavailable. "
-                "Install the CV extras: pip install -r requirements.txt"
-            )
-    return _DEEPFACE
+def _load_models():
+    global _DETECTOR, _RECOGNIZER
+    if _DETECTOR is None or _RECOGNIZER is None:
+        cv2 = _cv()
+        if not YUNET_MODEL.is_file() or not SFACE_MODEL.is_file():
+            raise RuntimeError("YuNet/SFace ONNX model files are missing from backend/model_weights.")
+        _DETECTOR = cv2.FaceDetectorYN.create(
+            str(YUNET_MODEL), "", (320, 320), 0.7, 0.3, 5000,
+            cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU,
+        )
+        _RECOGNIZER = cv2.FaceRecognizerSF.create(
+            str(SFACE_MODEL), "", cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU,
+        )
+    return _DETECTOR, _RECOGNIZER
 
 
 def face_pipeline_available() -> bool:
-    """True when the full biometric pipeline can run on this host."""
-    return _deepface() is not None
+    """Return whether CPU OpenCV YuNet/SFace and both bundled models are available."""
+    if not settings.FACE_PIPELINE_ENABLED or not YUNET_MODEL.is_file() or not SFACE_MODEL.is_file():
+        return False
+    try:
+        cv2 = _cv()
+        return hasattr(cv2, "FaceDetectorYN") and hasattr(cv2, "FaceRecognizerSF")
+    except RuntimeError:
+        return False
 
 
 class FaceService:
-    """
-    Wraps the DeepFace / ArcFace pipeline for:
-      1. Enrollment: generate a mean 512-dim embedding from N frames.
-      2. Verification: compare a live frame embedding against a stored vector.
-    """
+    """Create SFace embeddings at enrollment and compare them during attendance."""
 
-    def __init__(self, model_name: str = "ArcFace", detector_backend: str = "mtcnn"):
-        self.model_name = model_name
-        self.detector_backend = detector_backend
-        self._threshold = 0.40  # Cosine distance threshold
+    model_name = "SFace"
+    embedding_dimensions = 128
 
-    # ── Internal: bytes → BGR numpy array ────────────────────────────────────
+    def __init__(self):
+        self._similarity_threshold = settings.FACE_SIMILARITY_THRESHOLD
+
     @staticmethod
-    def _bytes_to_bgr(image_bytes: bytes) -> "np.ndarray":
+    def _bytes_to_bgr(image_bytes: bytes):
         cv2, np = _cv(), _np()
-        arr = np.frombuffer(image_bytes, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
+        image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
             raise ValueError("Could not decode image bytes. Ensure the file is a valid JPEG/PNG.")
-        return img
+        return image
 
-    # ── Internal: extract embedding from BGR image ────────────────────────────
-    def _extract_embedding(self, bgr_image: "np.ndarray") -> "np.ndarray":
-        DeepFace = _deepface()
-        cv2, np = _cv(), _np()
-        if DeepFace is None:
-            raise RuntimeError("DeepFace is not installed. Run: pip install -r requirements.txt")
+    @staticmethod
+    def _detect_faces(image):
+        detector, _ = _load_models()
+        detector.setInputSize((image.shape[1], image.shape[0]))
+        _, faces = detector.detect(image)
+        if faces is None or len(faces) == 0:
+            return None
+        # YuNet rows contain the box, five landmarks and confidence score.
+        return max(faces, key=lambda face: float(face[2] * face[3]))
 
-        # DeepFace.represent expects RGB
-        rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-        representations = DeepFace.represent(
-            img_path=rgb,
-            model_name=self.model_name,
-            detector_backend=self.detector_backend,
-            enforce_detection=True,
-            align=True,
-        )
-        if not representations:
+    def _extract_embedding(self, bgr_image):
+        np = _np()
+        _, recognizer = _load_models()
+        face = self._detect_faces(bgr_image)
+        if face is None:
             raise ValueError("No face detected in the provided image.")
+        aligned_face = recognizer.alignCrop(bgr_image, face)
+        embedding = np.asarray(recognizer.feature(aligned_face), dtype=np.float32).reshape(-1)
+        if embedding.size != self.embedding_dimensions:
+            raise RuntimeError(f"SFace returned an unexpected {embedding.size}-value embedding.")
+        norm = np.linalg.norm(embedding)
+        if norm <= 0:
+            raise RuntimeError("SFace returned an empty face embedding.")
+        return embedding / norm
 
-        # Use the most prominent face (largest facial area)
-        best = max(representations, key=lambda r: r.get("facial_area", {}).get("w", 0))
-        return np.array(best["embedding"], dtype=np.float32)
-
-    # ── Enrollment: mean embedding from multiple frames ───────────────────────
-    async def generate_enrollment_embedding(
-        self, frame_bytes_list: List[bytes]
-    ) -> List[float]:
-        """
-        Processes N image frames and returns their normalised mean embedding
-        as a Python list of 512 floats, ready for PostgreSQL FLOAT[] storage.
-        """
+    async def generate_enrollment_embedding(self, frame_bytes_list: List[bytes]) -> List[float]:
+        """Return the normalized mean of SFace embeddings from enrollment frames."""
         if not frame_bytes_list:
             raise ValueError("At least one frame is required for enrollment.")
 
         np = _np()
-        embeddings: List["np.ndarray"] = []
-        errors: List[str] = []
-
+        embeddings = []
+        errors = []
         for idx, frame_bytes in enumerate(frame_bytes_list):
             try:
-                bgr = self._bytes_to_bgr(frame_bytes)
-                emb = self._extract_embedding(bgr)
-                embeddings.append(emb)
+                embeddings.append(self._extract_embedding(self._bytes_to_bgr(frame_bytes)))
             except Exception as exc:
                 errors.append(f"Frame {idx + 1}: {exc}")
                 logger.warning("Enrollment frame %d failed: %s", idx + 1, exc)
 
         if not embeddings:
-            raise ValueError(
-                f"No valid faces detected in any provided frame. Errors: {'; '.join(errors)}"
-            )
+            raise ValueError(f"No valid faces detected in any provided frame. Errors: {'; '.join(errors)}")
 
-        mean_vec = np.mean(np.stack(embeddings, axis=0), axis=0)
-        # L2-normalise the mean vector for cosine distance stability
-        norm = np.linalg.norm(mean_vec)
-        if norm > 0:
-            mean_vec = mean_vec / norm
+        mean_embedding = np.mean(np.stack(embeddings, axis=0), axis=0)
+        norm = np.linalg.norm(mean_embedding)
+        if norm <= 0:
+            raise ValueError("Could not create a stable face template from the enrollment frames.")
+        return (mean_embedding / norm).tolist()
 
-        return mean_vec.tolist()
-
-    # ── Verification: cosine distance between live frame and stored vector ────
-    async def verify(
-        self,
-        live_frame_bytes: bytes,
-        stored_embedding: List[float],
-    ) -> Tuple[bool, float]:
-        """
-        Returns (is_match: bool, cosine_distance: float).
-        cosine_distance <= threshold → MATCH.
-        """
+    async def verify(self, live_frame_bytes: bytes, stored_embedding: List[float]) -> Tuple[bool, float]:
+        """Return (match, cosine_distance); uses OpenCV's recommended SFace score cutoff."""
         np = _np()
-        bgr = self._bytes_to_bgr(live_frame_bytes)
-
+        stored = np.asarray(stored_embedding, dtype=np.float32).reshape(-1)
+        if stored.size != self.embedding_dimensions:
+            raise ValueError("This face template uses an older model. Re-enroll this person's face.")
         try:
-            live_emb = self._extract_embedding(bgr)
-        except ValueError as e:
-            logger.info("Verification: no face detected — %s", e)
-            # If no face is found, treat as mismatch with max distance
-            return False, 1.0
-
-        stored = np.array(stored_embedding, dtype=np.float32)
-
-        # L2-normalise both
-        live_norm = np.linalg.norm(live_emb)
+            live_embedding = self._extract_embedding(self._bytes_to_bgr(live_frame_bytes))
+        except ValueError as exc:
+            if "No face detected" in str(exc):
+                logger.info("Verification rejected: no face detected in camera frame.")
+                return False, 1.0
+            raise
         stored_norm = np.linalg.norm(stored)
-
-        if live_norm > 0:
-            live_emb = live_emb / live_norm
-        if stored_norm > 0:
-            stored = stored / stored_norm
-
-        # Cosine similarity → distance
-        cosine_similarity = float(np.dot(live_emb, stored))
-        cosine_distance = 1.0 - cosine_similarity
-
-        is_match = cosine_distance <= self._threshold
+        if stored_norm <= 0:
+            raise ValueError("Stored face template is invalid. Re-enroll this person's face.")
+        similarity = float(np.dot(live_embedding, stored / stored_norm))
+        cosine_distance = 1.0 - similarity
+        matched = similarity >= self._similarity_threshold
         logger.info(
-            "Verification  cosine_dist=%.4f  threshold=%.2f  match=%s",
-            cosine_distance, self._threshold, is_match,
+            "SFace similarity=%.4f threshold=%.3f match=%s",
+            similarity, self._similarity_threshold, matched,
         )
-        return is_match, round(cosine_distance, 6)
+        return matched, round(cosine_distance, 6)
 
-    # ── Utility: crop face ROI from frame ─────────────────────────────────────
-    def crop_face(self, bgr_image: "np.ndarray") -> Optional["np.ndarray"]:
-        """Return the cropped face region or None if no face found."""
+    def crop_face(self, bgr_image):
+        """Return the largest YuNet face crop, or None when no face is found."""
         try:
-            DeepFace = _deepface()
-            if DeepFace is None:
+            face = self._detect_faces(bgr_image)
+            if face is None:
                 return None
-            cv2 = _cv()
-            rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-            faces = DeepFace.extract_faces(
-                img_path=rgb,
-                detector_backend=self.detector_backend,
-                enforce_detection=True,
-            )
-            if not faces:
+            x, y, width, height = (int(value) for value in face[:4])
+            x1, y1 = max(0, x), max(0, y)
+            x2 = min(bgr_image.shape[1], x + width)
+            y2 = min(bgr_image.shape[0], y + height)
+            if x2 <= x1 or y2 <= y1:
                 return None
-            face_data = max(faces, key=lambda f: f["facial_area"]["w"])
-            fa = face_data["facial_area"]
-            x, y, w, h = fa["x"], fa["y"], fa["w"], fa["h"]
-            return bgr_image[max(0, y):y + h, max(0, x):x + w]
+            return bgr_image[y1:y2, x1:x2]
         except Exception:
             return None

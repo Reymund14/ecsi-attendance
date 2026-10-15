@@ -15,16 +15,9 @@ aiosqlite==0.20.0              # driver for the default local DATABASE_URL (sqli
 alembic==1.13.1
 
 # ── AI / Computer Vision ──────────────────────────────────────────────────────
-# NOT installed on Render — see requirements-render.txt for the slim cloud set.
-# Required only for edge/hardware nodes with a physical camera + face enrollment.
-deepface==0.0.93
+# OpenCV CPU YuNet detection and SFace recognition.
 opencv-python-headless==4.10.0.82
 numpy==1.26.4
-onnxruntime==1.18.0          # CPU inference backend for ArcFace
-
-# Face detector backends (deepface uses these)
-mtcnn==0.1.1
-retina-face==0.0.17
 
 # ── RFID (optional — uncomment as needed) ─────────────────────────────────────
 # pyserial==3.5              # UART/Serial RFID readers

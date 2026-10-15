@@ -46,6 +46,11 @@ async def verify_live_face(
         raise HTTPException(status_code=404, detail="User not found.")
     if not user.face_embedding:
         raise HTTPException(status_code=409, detail="No face template is enrolled for this user.")
+    if user.face_embedding.model_name != face_service.model_name or len(user.face_embedding.embedding_vector) != face_service.embedding_dimensions:
+        raise HTTPException(
+            status_code=409,
+            detail="This user's face template uses the old ArcFace model. Re-enroll their face for SFace.",
+        )
     if not face_pipeline_available():
         raise HTTPException(status_code=503, detail="Face verification is unavailable on this server.")
 

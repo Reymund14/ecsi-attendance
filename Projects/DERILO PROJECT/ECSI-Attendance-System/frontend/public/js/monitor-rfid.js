@@ -257,15 +257,19 @@ function _monRunFaceAuth(student, uid, checkType){
     authState='face_done';
     const timeStr=now.toLocaleTimeString();
 
-    if(result.status==='no_face_template'){
+    if(result.status==='no_face_template'||result.status==='legacy_face_template'){
+      const templateMessage=result.status==='legacy_face_template'
+        ? `${student.full_name}'s old face template must be re-enrolled for SFace. Attendance denied.`
+        : `${student.full_name} has no face template on record. Time-in denied.`;
       monSetCamOverlay('no_face', {...result, full_name:student.full_name, id_number:student.id_number});
+      if(badge&&result.status==='legacy_face_template') badge.textContent='Re-enroll Face';
       if(badge){badge.textContent='🚷 No Template';badge.style.cssText='font-size:10px;padding:3px 8px;border-radius:99px;background:#FEE2E2;color:#991B1B';}
       const ev={full_name:student.full_name,id_number:student.id_number,status:'no_face_template',
         check_type:checkType,terminal_id:'Terminal-1',timestamp:now.toISOString(),
-        rfid_uid:uid,section:student.section||student.department||'',detail:'Face not enrolled'};
+        rfid_uid:uid,section:student.section||student.department||'',detail:templateMessage};
       feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
       refreshFeed(); refreshMonFeed();
-      _monWarnToast('no_face', `${student.full_name} has no face template on record. Time-in denied.`);
+      _monWarnToast('no_face', templateMessage);
 
     } else if(!livenessOk){
       monSetCamOverlay('liveness_fail');

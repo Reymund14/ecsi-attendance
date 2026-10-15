@@ -97,7 +97,7 @@ class AttendanceService:
             face_embedding = user.face_embedding
 
             # When verification cannot run — no face template on file, or the
-            # biometric pipeline is missing (e.g. DeepFace is not installed) —
+            # biometric pipeline is missing (e.g. OpenCV or its model files are unavailable) —
             # we still persist the frame we just captured. The tap is recorded
             # for manual review instead of being dropped, and the evidence
             # survives in the private audit bucket.
@@ -105,7 +105,7 @@ class AttendanceService:
                 if face_embedding is None:
                     reason = "no face template enrolled"
                 else:
-                    reason = "face verification unavailable (DeepFace not installed)"
+                    reason = "face verification unavailable (OpenCV YuNet/SFace not ready)"
                 logger.warning(
                     "User %s — %s; saving capture as PENDING_REVIEW.", user.id_number, reason
                 )
@@ -224,7 +224,7 @@ class AttendanceService:
 
         `category` names the private-bucket subfolder: "verified" for a matched
         tap, "proxy" for a flagged mismatch, and "unverified" when verification
-        could not run (no template, missing DeepFace, or a pipeline error).
+        could not run (no template, missing OpenCV models, or a pipeline error).
         """
         if raw_frame is None:
             return None

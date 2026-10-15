@@ -574,7 +574,11 @@ async function verifyFaceFrame(student, frameDataUrl){
     const form=new FormData();
     form.append('frame',frameBlob,'attendance-frame.jpg');
     const response=await apiFetch(`/attendance/verify-face/${encodeURIComponent(student.id)}`,{method:'POST',body:form});
-    if(response?.status===409) return {matched:false,student,cosine:null,status:'no_face_template'};
+    if(response?.status===409){
+      const body=await response.json().catch(()=>({}));
+      const legacy=String(body.detail||'').toLowerCase().includes('old arcface');
+      return {matched:false,student,cosine:null,status:legacy?'legacy_face_template':'no_face_template'};
+    }
     if(!response?.ok) return {matched:false,student,cosine:null,status:'verification_unavailable'};
     const result=await response.json();
     return {matched:result.matched===true,student,cosine:result.cosine_distance,status:result.matched?'verified':'proxy_anomaly'};

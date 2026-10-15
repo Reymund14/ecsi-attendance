@@ -73,13 +73,13 @@ class Settings(BaseSettings):
     CAPTURE_FRAMES_COUNT: int = 5     # frames captured per enrollment session
 
     # ── AI / Biometrics ──────────────────────────────────────────
-    FACE_MODEL: str = "ArcFace"       # "ArcFace" | "Facenet512" | "DeepFace"
-    FACE_DETECTOR: str = "mtcnn"      # "mtcnn" | "retinaface" | "opencv"
-    COSINE_DISTANCE_THRESHOLD: float = 0.40   # <= 0.40 → MATCH
-    EMBEDDING_DIMENSIONS: int = 512
-    # Master switch for the DeepFace/TensorFlow pipeline. Set to false to skip
-    # importing the heavy AI stack entirely — startup stays fast and the
-    # TensorFlow/CUDA log noise disappears. Face enrollment returns 503 and
+    FACE_MODEL: str = "SFace"
+    FACE_DETECTOR: str = "YuNet"
+    FACE_SIMILARITY_THRESHOLD: float = 0.363  # SFace cosine similarity >= threshold is a match
+    COSINE_DISTANCE_THRESHOLD: float = 0.40   # Legacy/demo attendance-feed threshold
+    EMBEDDING_DIMENSIONS: int = 128
+    # Master switch for the OpenCV YuNet/SFace pipeline. Set to false to skip
+    # loading the CPU inference models. Face enrollment returns 503 and
     # RFID taps are still captured and recorded as PENDING_REVIEW for manual
     # review (see services/attendance_service.py). The packages remain
     # installed; this only controls whether they are loaded at runtime.

@@ -4,8 +4,7 @@
 # Render dependencies, including the CPU face enrollment pipeline.
 # Camera frames are captured in the browser and POSTed as base64; the Render
 # service does not need access to a physical camera or RFID reader.
-# DeepFace/TensorFlow and its model weights are large, so builds and the first
-# face-enrollment request take longer and need adequate Render resources.
+# OpenCV YuNet/SFace runs on CPU; ONNX model files are bundled in model_weights/.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Web Framework ─────────────────────────────────────────────────────────────
@@ -34,9 +33,5 @@ python-dotenv==1.0.1
 httpx==0.27.0
 
 # AI / Computer Vision (CPU inference)
-deepface==0.0.93
 opencv-python-headless==4.10.0.82
 numpy==1.26.4
-onnxruntime==1.18.0
-mtcnn==0.1.1
-retina-face==0.0.17

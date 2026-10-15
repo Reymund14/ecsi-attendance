@@ -425,13 +425,14 @@ function fsTapRfid(){
       const now=new Date();
       const timeStr=now.toLocaleTimeString();
 
-      if(result.status==='no_face_template'){
+      if(result.status==='no_face_template'||result.status==='legacy_face_template'){
         const ev={full_name:u.full_name,id_number:u.id_number,status:'no_face_template',
           check_type:checkType,terminal_id:'Terminal-1',timestamp:now.toISOString(),
           rfid_uid:uid,section:u.section||u.department||''};
         feedItems.unshift(ev); if(feedItems.length>100) feedItems.pop();
         refreshFeed(); refreshMonFeed(); fsFeedRefresh();
         fsSetCamOverlay('no_face',result);
+        if(badge&&result.status==='legacy_face_template') badge.textContent='Re-enroll face';
         if(badge){badge.textContent='No template';badge.style.color='#F59E0B';}
 
       } else if(result.matched){

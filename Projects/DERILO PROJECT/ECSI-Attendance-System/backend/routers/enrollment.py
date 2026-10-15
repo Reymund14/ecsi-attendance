@@ -122,8 +122,8 @@ async def enroll_face(
 ):
     """
     Accepts up to 5 facial image frames. When the biometric pipeline is
-    available it generates a mean 512-dim ArcFace embedding and stores it.
-    When it is not (DeepFace/ArcFace missing, or FACE_PIPELINE_ENABLED=false)
+    available it generates a mean 128-dim SFace embedding and stores it.
+    When it is not (OpenCV/models missing, or FACE_PIPELINE_ENABLED=false)
     the reference photo is still saved and `embedding_saved` is False, so the
     upload is never lost and can be re-processed later. Students enroll
     themselves; faculty/admin can enroll any user.
@@ -157,8 +157,8 @@ async def enroll_face(
                 detail=f"Frame {idx + 1} is not a valid JPEG, PNG or WEBP image.",
             )
 
-    # Generate the mean embedding when the AI pipeline is usable. A missing
-    # DeepFace is expected (FACE_PIPELINE_ENABLED=false / slim cloud deploy), so
+    # Generate the mean embedding when the CPU face pipeline is usable. When it
+    # is disabled or unavailable, the reference photo is still saved, so
     # it degrades to "photo only" rather than failing the whole request.
     mean_vector = None
     if face_pipeline_available():

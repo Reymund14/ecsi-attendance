@@ -107,7 +107,7 @@ class FaceEnrollmentOut(BaseModel):
     """
     Result of a face-enrollment attempt.
 
-    When the biometric pipeline is unavailable (DeepFace/ArcFace not installed,
+    When the biometric pipeline is unavailable (OpenCV YuNet/SFace not installed,
     or FACE_PIPELINE_ENABLED=false) the reference photo is still stored, but no
     template is generated: `embedding_saved` is False and the embedding fields
     are None. Callers can retry enrollment later once the pipeline is restored.

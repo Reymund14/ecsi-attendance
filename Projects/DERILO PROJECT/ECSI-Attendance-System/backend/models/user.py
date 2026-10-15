@@ -166,7 +166,7 @@ class FaceEmbedding(Base):
         UUIDString(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True
     )
     embedding_vector: Mapped[List[float]] = mapped_column(FloatListJSON, nullable=False)
-    model_name: Mapped[str] = mapped_column(String(64), nullable=False, default="ArcFace")
+    model_name: Mapped[str] = mapped_column(String(64), nullable=False, default="SFace")
     source_frame_count: Mapped[int] = mapped_column(default=5)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
