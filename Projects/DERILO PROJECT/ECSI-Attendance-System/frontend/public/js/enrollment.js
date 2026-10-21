@@ -71,19 +71,19 @@ function renderEnrolStep(){
   if(s.step==='list'){
     const students=appUsers().filter(u=>u.role==='student');
     body.innerHTML=`
-      <div style="margin-bottom:12px;display:flex;gap:10px;align-items:center">
-        <input type="text" id="enrol-q" placeholder="Search by name or ID…" maxlength="60" spellcheck="false" style="flex:1;padding:9px 14px;font-size:13px" oninput="enrolFilterList()"/>
-        <select id="enrol-section-filter" onchange="enrolFilterList()" style="padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;background:#fff;color:#374151;min-width:160px">
+      <div style="margin-bottom:14px;display:flex;gap:10px;align-items:center;width:100%">
+        <input type="search" id="enrol-q" placeholder="Search students by name or ID…" maxlength="60" spellcheck="false" style="box-sizing:border-box;flex:1 1 0;min-width:120px;padding:13px 16px;font-size:15px;border:1px solid #D1D5DB;border-radius:9px;box-shadow:0 1px 3px rgba(15,23,42,.06)" oninput="enrolFilterList()"/>
+        <select id="enrol-section-filter" onchange="enrolFilterList()" style="flex:0 0 auto;width:auto;padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;background:#fff;color:#374151">
           <option value="">All Sections</option>
           ${appSections().map(s=>`<option value="${s}">${s}</option>`).join('')}
         </select>
-        <select id="enrol-status-filter" onchange="enrolFilterList()" style="padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;background:#fff;color:#374151">
+        <select id="enrol-status-filter" onchange="enrolFilterList()" style="flex:0 0 auto;width:auto;padding:9px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;background:#fff;color:#374151">
           <option value="">All Status</option>
           <option value="complete">Fully Enrolled</option>
           <option value="partial">Partial</option>
           <option value="none">Not Enrolled</option>
         </select>
-        <span id="enrol-count" style="font-size:12px;color:#9CA3AF;white-space:nowrap">${students.length} students</span>
+        <span id="enrol-count" style="flex:0 0 auto;font-size:12px;color:#9CA3AF;white-space:nowrap">${students.length} students</span>
       </div>
       <div class="card" style="overflow:hidden">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -482,12 +482,18 @@ async function enrolCreateStudent(){
   ]);
   if(!ok){setEnrolAlert('error','Please correct the highlighted fields.');return;}
   if(appUsers().find(u=>u.id_number===id)){setEnrolAlert('error','ID Number already exists.');return;}
+  const emailField=document.getElementById('ns-email');
+  if(email && appUsers().some(u=>u.email && u.email.trim().toLowerCase()===email.toLowerCase())){
+    vShow(emailField,'Email already exists.');
+    setEnrolAlert('error','Email already exists.');
+    return;
+  }
   const password=prompt('Set an initial password (at least 8 characters) for this student:')||'';
   if(password.length<8){setEnrolAlert('error','Initial password must be at least 8 characters.');return;}
   if(!demoMode){
     const r=await apiFetch('/users/',{method:'POST',body:JSON.stringify({id_number:id,full_name:name,email:email||null,password,role:'student',section:section||null,department:dept||null,parent_name:parentName,parent_contact:parentContact})});
-    if(!r?.ok){let msg='Could not create student.';try{msg=(await r.json()).detail||msg;}catch{}setEnrolAlert('error',msg);return;}
-    const saved=await r.json();backendUsers=[...backendUsers,saved];enrolState.selected={...saved,has_rfid:false,has_face:false};enrolState.step='rfid';renderEnrolInner(document.getElementById('page-enrollment'));return;
+    if(!r?.ok){let msg='Could not create student.';try{msg=(await r.json()).detail||msg;}catch{}if(/email/i.test(msg))vShow(emailField,'Email already exists.');setEnrolAlert('error',msg);return;}
+    const saved=await r.json();backendUsers=[...backendUsers,saved];enrolState.selected={...saved,has_rfid:false,has_face:false};enrolState.step='rfid';renderEnrolInner(document.getElementById('page-enrollment'));setEnrolAlert('success','Created account successfully.');return;
   }
   const newStudent={id:'u-'+Date.now(),id_number:id,full_name:name,role:'student',department:dept,section:section,has_rfid:false,has_face:false,status:'active',parent_name:parentName,parent_contact:parentContact,_justEnrolled:true};
   MOCK.users.push(newStudent);
@@ -495,6 +501,7 @@ async function enrolCreateStudent(){
   enrolState.step='rfid';
   const el=document.getElementById('page-enrollment');
   renderEnrolInner(el);
+  setEnrolAlert('success','Created account successfully.');
 }
 
 function enrolSelect(u){enrolState.selected=u;enrolState.step='rfid';const el=document.getElementById('page-enrollment');renderEnrolInner(el);}
@@ -553,7 +560,7 @@ async function enrolBindRFID(){
   try{
     const r=await apiFetch(`/enrollment/${enrolState.selected.id}/rfid`,{method:'POST',body:JSON.stringify({card_uid:uid})});
     const d=await r.json();
-    if(!r.ok){setEnrolAlert('error',d.detail||'Binding failed. The card may already be in use.');return;}
+    if(!r.ok){const msg=d.detail||'Binding failed. The card may already be in use.';if(r.status===409)vShow(document.getElementById('rfid-uid'),msg);setEnrolAlert('error',msg);return;}
     enrolState.selected.has_rfid=true;enrolState.selected.rfid_uid=d.card_uid;
     backendUsers=backendUsers.map(u=>u.id===enrolState.selected.id?{...u,has_rfid:true,rfid_uid:d.card_uid}:u);
     setEnrolAlert('success',`Card <strong>${uid}</strong> bound successfully.`);
