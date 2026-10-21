@@ -43,7 +43,16 @@ const V = {
     const s = (v == null ? '' : String(v)).trim();
     if (!s) return required ? 'Email is required.' : '';
     if (s.length > 120) return 'Email must be 120 characters or fewer.';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s)) return 'Enter a valid email address.';
+    const at = s.lastIndexOf('@');
+    const local = s.slice(0, at);
+    const domain = s.slice(at + 1);
+    const labels = domain.split('.');
+    if (at < 1 || s.indexOf('@') !== at || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s) ||
+        local.startsWith('.') || local.endsWith('.') || local.includes('..') ||
+        labels.length < 2 || labels.some(label => !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)) ||
+        !/^[A-Za-z]{2,63}$/.test(labels[labels.length - 1])) {
+      return 'Enter a valid email address.';
+    }
     return '';
   },
 

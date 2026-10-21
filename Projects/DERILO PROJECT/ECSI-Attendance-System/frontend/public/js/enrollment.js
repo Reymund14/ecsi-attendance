@@ -495,7 +495,7 @@ async function enrolCreateStudent(){
     if(createBtn){createBtn.disabled=true;createBtn.innerHTML='<span class="spinner"></span> Creating account…';}
     try{
       const r=await apiFetch('/users/',{method:'POST',body:JSON.stringify({id_number:id,full_name:name,email:email||null,password,role:'student',section:section||null,department:dept||null,parent_name:parentName,parent_contact:parentContact})});
-      if(!r?.ok){let msg='Could not create student.';try{msg=(await r.json()).detail||msg;}catch{}if(/email/i.test(msg))vShow(emailField,'Email already exists.');setEnrolAlert('error',msg);return;}
+      if(!r?.ok){let msg='Could not create student.';try{const detail=(await r.json()).detail;if(typeof detail==='string')msg=detail;else if(Array.isArray(detail))msg=detail.map(e=>e?.msg||e?.message||JSON.stringify(e)).join('; ');else if(detail&&typeof detail==='object')msg=detail.msg||detail.message||JSON.stringify(detail);}catch{}if(/email already exists|student id or email already exists/i.test(msg))vShow(emailField,'Email already exists.');setEnrolAlert('error',msg);return;}
       const saved=await r.json();backendUsers=[...backendUsers,saved];enrolState.selected={...saved,has_rfid:false,has_face:false};enrolState.step='rfid';renderEnrolInner(document.getElementById('page-enrollment'));setEnrolAlert('success','Created account successfully.');return;
     }catch{
       setEnrolAlert('error','Could not reach the server. Please try again.');
