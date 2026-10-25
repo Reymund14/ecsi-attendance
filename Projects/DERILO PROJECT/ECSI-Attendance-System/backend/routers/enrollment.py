@@ -8,6 +8,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +66,7 @@ async def bind_rfid(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = str(user_id)
+    card_uid = body.card_uid.strip().upper()
     # IDs are VARCHAR(36) strings, but FastAPI hands us a uuid.UUID. Normalise
     # once so comparisons and binds below both work.
     # Ensure user exists
@@ -74,26 +76,35 @@ async def bind_rfid(
         raise HTTPException(status_code=404, detail="User not found.")
 
     # Ensure card UID not already taken by someone else
-    existing = await db.execute(select(RFIDCard).where(RFIDCard.card_uid == body.card_uid))
+    existing = await db.execute(select(RFIDCard).where(RFIDCard.card_uid == card_uid))
     card = existing.scalar_one_or_none()
     if card and card.user_id != user_id:
-        raise HTTPException(status_code=409, detail="This RFID card is already assigned to another user.")
+        raise HTTPException(status_code=409, detail="RFID card already exists for another student.")
 
     if card:
         # Re-activate existing card
         card.is_active = True
     else:
-        # Remove old card if exists
+        # Update an existing card row in place. This respects the unique
+        # user_id constraint and avoids a delete/insert race during rebind.
         old = await db.execute(select(RFIDCard).where(RFIDCard.user_id == user_id))
         old_card = old.scalar_one_or_none()
         if old_card:
-            await db.delete(old_card)
-            await db.flush()
+            old_card.card_uid = card_uid
+            old_card.is_active = True
+            card = old_card
+        else:
+            card = RFIDCard(user_id=user_id, card_uid=card_uid)
+            db.add(card)
 
-        card = RFIDCard(user_id=user_id, card_uid=body.card_uid.upper())
-        db.add(card)
-
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="RFID card already exists or this student already has an RFID card.",
+        ) from exc
     await db.refresh(card)
     return card
 

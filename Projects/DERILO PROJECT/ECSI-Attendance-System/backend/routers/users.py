@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -79,6 +80,15 @@ async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="ID number already registered.")
 
+    # Email is also unique in the database. Check it before INSERT so the
+    # enrollment form gets an actionable conflict instead of a generic 500.
+    if body.email:
+        existing_email = await db.execute(
+            select(User.id).where(func.lower(User.email) == body.email.lower())
+        )
+        if existing_email.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Email already exists.")
+
     user = User(
         id_number=body.id_number,
         full_name=body.full_name,
@@ -94,7 +104,16 @@ async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
         children=body.children or ([] if body.role != UserRole.PARENT else []),
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # A concurrent request can pass the pre-check before another request
+        # inserts the same ID/email. Keep that case a client-visible conflict.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Student ID or email already exists.",
+        ) from exc
     await db.refresh(user)
     return UserOut.from_orm_extended(user)
 
