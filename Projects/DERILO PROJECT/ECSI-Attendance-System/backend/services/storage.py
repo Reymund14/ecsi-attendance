@@ -29,6 +29,7 @@ import logging
 import mimetypes
 import os
 import posixpath
+import re
 from typing import Optional
 from urllib.parse import quote
 
@@ -448,32 +449,75 @@ async def save_capture(subdir: str, filename: str, data: bytes, content_type: st
     return await backend.save(CAPTURES_BUCKET, key, data, content_type)
 
 
-async def save_face_enrollment_photo(user_id: str, data: bytes) -> str:
-    """Store one enrollment reference image in the private captures bucket."""
+def enrollment_photo_stem(identifier: str) -> str:
+    """
+    Turn a human identifier (preferably id_number) into a storage-safe stem.
+
+    id_number is user-supplied and only length-limited, so characters such as
+    "/" or ":" would otherwise create nested keys or be rejected by _safe_key.
+    """
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", str(identifier or "")).strip(" ._-")
+    return stem or "unknown"
+
+
+def _enrollment_photo_stems(identifier: str, legacy_identifier: Optional[str]) -> list:
+    stems = [enrollment_photo_stem(identifier)]
+    if legacy_identifier:
+        legacy = enrollment_photo_stem(legacy_identifier)
+        if legacy not in stems:
+            stems.append(legacy)
+    return stems
+
+
+async def save_face_enrollment_photo(
+    identifier: str, data: bytes, legacy_identifier: Optional[str] = None
+) -> str:
+    """
+    Store one enrollment reference image under the user's id_number.
+
+    `legacy_identifier` is the user UUID used by older builds; when supplied,
+    the previous UUID-named copy is removed so the bucket keeps a single
+    reference image per user.
+    """
     sniffed = sniff_image(data)
     if sniffed is None:
         raise StorageError("Unsupported or invalid face enrollment image.")
     content_type, ext = sniffed
-    return await save_capture("enrollments", f"{user_id}{ext}", data, content_type)
+    stem = enrollment_photo_stem(identifier)
+    stored = await save_capture("enrollments", f"{stem}{ext}", data, content_type)
+    if legacy_identifier and enrollment_photo_stem(legacy_identifier) != stem:
+        await delete_face_enrollment_photo(legacy_identifier)
+    return stored
 
 
-async def face_enrollment_photo_url(user_id: str) -> Optional[str]:
-    """Mint a short-lived URL for a user's private enrollment image."""
-    for ext in (".jpg", ".png", ".webp"):
-        url = await capture_signed_url(f"enrollments/{user_id}{ext}")
-        if url:
-            return url
+async def face_enrollment_photo_url(
+    identifier: str, legacy_identifier: Optional[str] = None
+) -> Optional[str]:
+    """
+    Mint a short-lived URL for a user's private enrollment image.
+
+    `identifier` is the id_number; `legacy_identifier` (the user UUID) keeps
+    photos saved by older builds reachable until that user re-enrolls.
+    """
+    for stem in _enrollment_photo_stems(identifier, legacy_identifier):
+        for ext in (".jpg", ".png", ".webp"):
+            url = await capture_signed_url(f"enrollments/{stem}{ext}")
+            if url:
+                return url
     return None
 
 
-async def delete_face_enrollment_photo(user_id: str) -> bool:
-    """Delete the private enrollment image for a user."""
+async def delete_face_enrollment_photo(
+    identifier: str, legacy_identifier: Optional[str] = None
+) -> bool:
+    """Delete the private enrollment image for a user (id_number and legacy UUID)."""
     removed = False
-    for ext in (".jpg", ".png", ".webp"):
-        try:
-            removed = await get_storage().delete(CAPTURES_BUCKET, f"enrollments/{user_id}{ext}") or removed
-        except StorageError:
-            continue
+    for stem in _enrollment_photo_stems(identifier, legacy_identifier):
+        for ext in (".jpg", ".png", ".webp"):
+            try:
+                removed = await get_storage().delete(CAPTURES_BUCKET, f"enrollments/{stem}{ext}") or removed
+            except StorageError:
+                continue
     return removed
 
 

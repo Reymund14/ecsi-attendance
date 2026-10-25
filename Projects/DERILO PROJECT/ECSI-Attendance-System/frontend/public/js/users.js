@@ -157,12 +157,25 @@ function _userFormHtml(u){
           <option value="inactive" ${isEdit&&u.status==='inactive'?'selected':''}>Inactive</option>
         </select>
       </div>
+      <div style="grid-column:1/-1">
+        <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">${isEdit?'New Password':'Password *'}</label>
+        <div style="position:relative">
+          <input id="uf-password" type="password" placeholder="${isEdit?'Leave blank to keep the current password':'At least 8 characters'}" maxlength="128" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding-right:40px"/>
+          <button type="button" onclick="toggleUserPw()" title="Show / hide password" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#6B7280;padding:2px">👁</button>
+        </div>
+        <div style="font-size:11px;color:#6B7280;margin-top:4px">${isEdit?'Optional — fill this in only if you want to reset this user\'s password.':'Required — minimum 8 characters.'}${demoMode?' Demo mode does not change login passwords.':''}</div>
+      </div>
     </div>
     <div id="uf-error" style="color:#DC2626;font-size:12px;margin-top:12px;display:none"></div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid #F3F4F6">
       <button class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveUser(${isEdit?`'${u.id}'`:'null'})">${isEdit?'Save Changes':'Create User'}</button>
     </div>`;
+}
+
+function toggleUserPw(){
+  const input=document.getElementById('uf-password');
+  if(input) input.type=input.type==='password'?'text':'password';
 }
 
 function userFormRoleChanged(){
@@ -206,6 +219,8 @@ async function saveUser(userId){
   const parentContact=(document.getElementById('uf-parent-contact')?.value||'').trim();
   const address=(document.getElementById('uf-address')?.value||'').trim();
   const status=document.getElementById('uf-status')?.value||'active';
+  // Only present in the edit modal. Blank means "keep the current password".
+  const newPassword=document.getElementById('uf-password')?.value||'';
   const errEl=document.getElementById('uf-error');
 
   const ok=vValidate([
@@ -219,6 +234,14 @@ async function saveUser(userId){
     [document.getElementById('uf-address'), V.text(120,false,'Address')(address)]
   ]);
   if(!ok){if(errEl){errEl.textContent='Please correct the highlighted fields.';errEl.style.display='block';}return;}
+  if(!userId && newPassword.length<8){
+    if(errEl){errEl.textContent='Password must be at least 8 characters.';errEl.style.display='block';}
+    return;
+  }
+  if(newPassword && (newPassword.length<8||newPassword.length>128)){
+    if(errEl){errEl.textContent='New password must be 8–128 characters, or leave it blank to keep the current password.';errEl.style.display='block';}
+    return;
+  }
   if(errEl) errEl.style.display='none';
   // Check duplicate ID (on create)
   if(demoMode&&!userId && appUsers().find(u=>u.id_number===idNum)){
@@ -227,11 +250,11 @@ async function saveUser(userId){
 
   if(!demoMode){
     const payload={full_name:name,email:email||null,department:role==='student'?null:dept||null,section:role==='super_admin'?null:section||null,phone:phone||null,address:address||null,parent_name:parentName||null,parent_contact:parentContact||null,status};
+    if(userId&&newPassword) payload.password=newPassword;
     let response;
     if(userId) response=await apiFetch(`/users/${userId}`,{method:'PATCH',body:JSON.stringify(payload)});
     else {
-      payload.id_number=idNum;payload.role=role;payload.password=prompt('Set an initial password (at least 8 characters) for this account:')||'';
-      if(payload.password.length<8){errEl.textContent='Initial password must be at least 8 characters.';errEl.style.display='block';return;}
+      payload.id_number=idNum;payload.role=role;payload.password=newPassword;
       response=await apiFetch('/users/',{method:'POST',body:JSON.stringify(payload)});
     }
     if(!response?.ok){let msg='Could not save user.';try{const data=await response.json();msg=data.detail||msg;}catch{}errEl.textContent=msg;errEl.style.display='block';return;}

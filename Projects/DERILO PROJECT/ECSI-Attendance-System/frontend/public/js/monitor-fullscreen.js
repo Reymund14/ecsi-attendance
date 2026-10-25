@@ -23,6 +23,29 @@ function monitorToggleAutoScan(){
 }
 
 // ── Fullscreen Monitor ───────────────────────────────────────
+// The overlay is rebuilt on every open, so its WebSocket badge must be
+// re-synced from the live connection state. Previously it was hardcoded to
+// "offline" at render time and never refreshed, which made a healthy socket
+// look disconnected. Mirrors setMonBadge() in monitor.js.
+function fsWsState(){
+  if(demoMode) return 'demo';
+  return wsConn?.readyState===1 ? 'live' : 'offline';
+}
+function setFsBadge(state){
+  const b=document.getElementById('fs-ws-badge');
+  if(!b) return;
+  const s=demoMode?'demo':state;
+  const map={live:['#41A638','#F0FDF4','rgba(65,166,56,.3)','live'],
+             demo:['#F2C111','#FFFBEB','#FDE68A','demo'],
+             offline:['#9CA3AF','#F9FAFB','#E5E7EB','offline']};
+  const [col,bg,border,lbl]=map[s]||map.offline;
+  b.className='ws-badge';
+  b.style.color=s==='live'?'#16A34A':s==='demo'?'#D97706':'#6B7280';
+  b.style.background=bg;
+  b.style.borderColor=border;
+  b.innerHTML=`<span style="width:7px;height:7px;border-radius:50%;background:${col};display:inline-block"></span> ${lbl}`;
+}
+
 function openMonitorFullscreen(){
   // Pause the regular monitor auto-scan — its pipeline checks monitorCamStream (regular cam),
   // not fsCamStream (fullscreen cam), so it would falsely trigger "Camera Required" while
@@ -52,7 +75,7 @@ function openMonitorFullscreen(){
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         <div id="fs-clock" style="color:#9CA3AF;font-size:13px;font-family:monospace"></div>
-        <div id="fs-ws-badge" class="ws-badge ws-off" style="font-size:11px"><span style="width:7px;height:7px;border-radius:50%;background:#F2C111;display:inline-block"></span> ${demoMode?'demo':'offline'}</div>
+        <div id="fs-ws-badge" class="ws-badge ws-off" style="font-size:11px"></div>
         <button onclick="closeMonitorFullscreen()" style="background:#374151;border:none;color:#fff;border-radius:7px;padding:6px 14px;cursor:pointer;font-size:12px">✕ Exit</button>
       </div>
     </div>
@@ -141,6 +164,9 @@ function openMonitorFullscreen(){
       </div>
 
     </div>`;
+
+  // Reflect the real WebSocket state instead of a stale "offline" label
+  setFsBadge(fsWsState());
 
   // Clock
   const clockEl=document.getElementById('fs-clock');

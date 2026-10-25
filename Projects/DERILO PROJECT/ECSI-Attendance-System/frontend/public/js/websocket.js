@@ -55,6 +55,9 @@ function connectWS(){
   }catch{setWsBadge('offline');}
 }
 function setWsBadge(s){
+  // Keep the fullscreen monitor badge in sync even when the dashboard badge
+  // is absent (i.e. the user is on the Live Monitor or fullscreen overlay).
+  if(typeof setFsBadge==='function') setFsBadge(s);
   const el=document.getElementById('ws-badge');
   if(!el) return;
   if(demoMode){el.className='ws-badge ws-demo';el.innerHTML='<span style="width:7px;height:7px;border-radius:50%;background:#F59E0B;display:inline-block"></span> Demo Mode';return;}

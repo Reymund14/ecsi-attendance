@@ -38,6 +38,8 @@ class UserUpdate(BaseModel):
     parent_contact: Optional[str] = None
     status: Optional[AccountStatus] = None
     children: Optional[List[str]] = None
+    # Optional admin password reset. Omit or send null to leave it unchanged.
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
 
 
 class UserPasswordChange(BaseModel):

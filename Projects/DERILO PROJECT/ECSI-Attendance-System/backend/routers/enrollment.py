@@ -48,7 +48,7 @@ async def delete_face(
 
     # A photo-only enrollment (pipeline was unavailable) has no embedding but
     # still owns a reference image, so clear both and only 404 when neither exists.
-    photo_removed = await storage.delete_face_enrollment_photo(user_id)
+    photo_removed = await storage.delete_face_enrollment_photo(user.id_number, user_id)
     if not embedding and not photo_removed:
         raise HTTPException(status_code=404, detail="No face template found for this user.")
 
@@ -180,7 +180,9 @@ async def enroll_face(
     # Keep one reference frame in the private bucket either way. Raw face
     # imagery never goes in the public profile-photo bucket.
     try:
-        await storage.save_face_enrollment_photo(user_id, frame_bytes_list[0])
+        await storage.save_face_enrollment_photo(
+            user.id_number, frame_bytes_list[0], legacy_identifier=user_id
+        )
     except storage.StorageError as exc:
         raise HTTPException(status_code=502, detail=f"Could not save enrollment photo: {exc}")
 
@@ -189,7 +191,7 @@ async def enroll_face(
     if mean_vector is None:
         return FaceEnrollmentOut(
             embedding_saved=False,
-            face_photo_url=await storage.face_enrollment_photo_url(user_id),
+            face_photo_url=await storage.face_enrollment_photo_url(user.id_number, user_id),
         )
 
     # Persist or update embedding
@@ -218,7 +220,7 @@ async def enroll_face(
         source_frame_count=embedding.source_frame_count,
         created_at=embedding.created_at,
         updated_at=embedding.updated_at,
-        face_photo_url=await storage.face_enrollment_photo_url(user_id),
+        face_photo_url=await storage.face_enrollment_photo_url(user.id_number, user_id),
     )
 
 
@@ -238,7 +240,7 @@ async def enrollment_status(user_id: uuid.UUID, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="User not found.")
     # Return the reference photo whenever one was stored, even for a photo-only
     # enrollment where no embedding exists yet.
-    photo_url = await storage.face_enrollment_photo_url(user_id)
+    photo_url = await storage.face_enrollment_photo_url(user.id_number, user_id)
     has_embedding = user.face_embedding is not None
     return {
         "user_id": str(user.id),

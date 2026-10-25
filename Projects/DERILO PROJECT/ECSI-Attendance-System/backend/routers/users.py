@@ -119,11 +119,25 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    for field, value in body.model_dump(exclude_none=True).items():
+    data = body.model_dump(exclude_none=True)
+    new_password = data.pop("password", None)
+
+    for field, value in data.items():
         # Only super admin can change status
         if field == "status" and current_user.role != UserRole.SUPER_ADMIN:
             continue
         setattr(user, field, value)
+
+    # Password resets are a super-admin action; the dedicated self-service
+    # endpoint (/me/change-password) is the only way for anyone else to change
+    # their own password, because it requires the current password.
+    if new_password is not None:
+        if current_user.role != UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=403,
+                detail="Only a super admin can reset a password.",
+            )
+        user.hashed_password = hash_password(new_password)
 
     await db.flush()
     await db.refresh(user)
