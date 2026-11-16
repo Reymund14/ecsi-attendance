@@ -22,20 +22,37 @@ def _record():
 
 class AttendanceNoticeTests(unittest.IsolatedAsyncioTestCase):
     async def test_skips_send_when_not_configured(self):
-        with mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL", ""), \
+        with mock.patch.object(email_notifier.settings, "MAIL_WEBHOOK_URL", ""), \
+             mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL", ""), \
              mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL_APP_PASSWORD", ""), \
-             mock.patch.object(email_notifier, "_send") as send:
+             mock.patch.object(email_notifier, "_send_webhook") as webhook, \
+             mock.patch.object(email_notifier, "_send_smtp") as smtp:
             await email_notifier.send_attendance_notice(_user(), _record())
-        send.assert_not_called()
+        webhook.assert_not_called()
+        smtp.assert_not_called()
 
-    async def test_emails_student_and_falls_back_to_notify_email(self):
-        sent = []
-        with mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL", "school@gmail.com"), \
-             mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL_APP_PASSWORD", "apppassword"), \
-             mock.patch.object(email_notifier, "_send", side_effect=sent.append):
+    async def test_webhook_is_preferred_and_falls_back_to_notify_email(self):
+        calls = []
+
+        async def fake_webhook(to, subject, body):
+            calls.append((to, subject))
+
+        with mock.patch.object(email_notifier.settings, "MAIL_WEBHOOK_URL", "https://script/exec"), \
+             mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL", "school@gmail.com"), \
+             mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL_APP_PASSWORD", ""), \
+             mock.patch.object(email_notifier, "_send_webhook", fake_webhook):
             await email_notifier.send_attendance_notice(_user("student@example.com"), _record())
             await email_notifier.send_attendance_notice(_user(None), _record())
 
-        self.assertEqual([m["To"] for m in sent], ["student@example.com", "school@gmail.com"])
-        self.assertEqual(sent[0]["From"], "school@gmail.com")
-        self.assertIn("Juan dela Cruz", sent[0]["Subject"])
+        self.assertEqual(
+            [to for to, _ in calls], ["student@example.com", "school@gmail.com"]
+        )
+        self.assertIn("Juan dela Cruz", calls[0][1])
+
+    async def test_smtp_used_when_webhook_is_blank(self):
+        with mock.patch.object(email_notifier.settings, "MAIL_WEBHOOK_URL", ""), \
+             mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL", "school@gmail.com"), \
+             mock.patch.object(email_notifier.settings, "NOTIFY_EMAIL_APP_PASSWORD", "apppassword"), \
+             mock.patch.object(email_notifier, "_send_smtp") as smtp:
+            await email_notifier.send_attendance_notice(_user("student@example.com"), _record())
+        self.assertEqual(smtp.call_args.args[0], "student@example.com")

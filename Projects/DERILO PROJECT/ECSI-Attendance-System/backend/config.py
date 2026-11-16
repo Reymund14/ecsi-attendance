@@ -113,9 +113,12 @@ class Settings(BaseSettings):
     STORAGE_AUTO_CREATE_BUCKETS: bool = True
 
     # ── Email notifications ──────────────────────────────────────
-    # Attendance emails are sent from this Gmail account, using a 16-character
-    # Google App Password (Google Account -> Security -> 2-Step Verification ->
-    # App passwords). Leave either value empty to disable email notifications.
+    # Preferred: a Google Apps Script web app that sends through Gmail over
+    # HTTPS (see backend/gmail_relay.gs). Render's free tier blocks SMTP.
+    MAIL_WEBHOOK_URL: str = ""
+    MAIL_WEBHOOK_SECRET: str = ""
+    # Direct SMTP is used when no webhook is configured (local dev or a paid
+    # Render instance). NOTIFY_EMAIL also acts as the fallback recipient.
     NOTIFY_EMAIL: str = ""
     NOTIFY_EMAIL_APP_PASSWORD: str = ""
     SMTP_HOST: str = "smtp.gmail.com"
@@ -156,7 +159,13 @@ class Settings(BaseSettings):
     def _normalise_environment(cls, value: str) -> str:
         return value.strip().lower()
 
-    @field_validator("NOTIFY_EMAIL", "NOTIFY_EMAIL_APP_PASSWORD", mode="before")
+    @field_validator(
+        "NOTIFY_EMAIL",
+        "NOTIFY_EMAIL_APP_PASSWORD",
+        "MAIL_WEBHOOK_URL",
+        "MAIL_WEBHOOK_SECRET",
+        mode="before",
+    )
     @classmethod
     def _clean_notify_credentials(cls, value):
         """Google shows app passwords with spaces; the login needs them removed."""
