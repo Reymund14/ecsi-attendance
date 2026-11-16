@@ -27,6 +27,16 @@ function doPost(e) {
   if (!secret || data.secret !== secret) {
     return ContentService.createTextOutput('unauthorized');
   }
-  GmailApp.sendEmail(data.to, data.subject, data.body);
+
+  var options = {};
+  if (data.attachmentBase64) {
+    options.attachments = [Utilities.newBlob(
+      Utilities.base64Decode(data.attachmentBase64),
+      data.attachmentMime || 'image/jpeg',
+      data.attachmentName || 'attendance.jpg'
+    )];
+  }
+
+  GmailApp.sendEmail(data.to, data.subject, data.body, options);
   return ContentService.createTextOutput('ok');
 }

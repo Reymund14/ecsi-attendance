@@ -25,7 +25,7 @@ from models.user import RFIDCard, FaceEmbedding, User
 from schemas.attendance import WSAttendanceEvent, WSAlertEvent
 from services import storage
 from services.camera_service import camera_service
-from services.email_notifier import send_attendance_notice
+from services.email_notifier import send_attendance_notice, send_proxy_alert_notice
 from services.face_service import FaceService, face_pipeline_available
 from websocket.manager import ws_manager
 
@@ -181,7 +181,7 @@ class AttendanceService:
                 )
 
                 # Save intruder crop to audit directory
-                intruder_path = await self._save_intruder_crop(raw_frame, record.id)
+                intruder_path, intruder_photo = await self._save_intruder_crop(raw_frame, record.id)
 
                 # Write proxy audit log
                 proxy_log = ProxyAuditLog(
@@ -200,7 +200,17 @@ class AttendanceService:
             await db.commit()
 
             if is_match:
-                await send_attendance_notice(user, record)
+                await send_attendance_notice(
+                    user, record,
+                    photo=self._encode_jpeg(raw_frame),
+                    photo_mime="image/jpeg",
+                )
+            else:
+                await send_proxy_alert_notice(
+                    user, record,
+                    photo=intruder_photo,
+                    photo_mime="image/jpeg",
+                )
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -230,33 +240,46 @@ class AttendanceService:
         tap, "proxy" for a flagged mismatch, and "unverified" when verification
         could not run (no template, missing OpenCV models, or a pipeline error).
         """
-        if raw_frame is None:
+        data = self._encode_jpeg(raw_frame)
+        if data is None:
             return None
         try:
             filename = f"{user_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-            ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
-            if not ok:
-                raise RuntimeError("cv2.imencode returned False")
-            return await storage.save_capture(category, filename, buf.tobytes(), "image/jpeg")
+            return await storage.save_capture(category, filename, data, "image/jpeg")
         except Exception as exc:
             logger.error("Failed to save frame: %s", exc)
             return None
 
-    async def _save_intruder_crop(self, raw_frame: np.ndarray, record_id: uuid.UUID) -> str | None:
-        """Persist the cropped face of a flagged proxy attempt. Returns a KEY."""
+    @staticmethod
+    def _encode_jpeg(raw_frame) -> bytes | None:
+        """Encode a BGR frame as JPEG, for storage and for the email attachment."""
         if raw_frame is None:
             return None
         try:
-            crop = face_service.crop_face(raw_frame)
-            target = crop if crop is not None else raw_frame
-            filename = f"intruder_{record_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-            ok, buf = cv2.imencode(".jpg", target, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
             if not ok:
                 raise RuntimeError("cv2.imencode returned False")
-            return await storage.save_capture("intruders", filename, buf.tobytes(), "image/jpeg")
+            return buf.tobytes()
+        except Exception as exc:
+            logger.error("Failed to encode frame: %s", exc)
+            return None
+
+    async def _save_intruder_crop(self, raw_frame: np.ndarray, record_id: uuid.UUID) -> tuple[str | None, bytes | None]:
+        """Persist the cropped face of a flagged proxy attempt. Returns (key, jpeg)."""
+        if raw_frame is None:
+            return None, None
+        crop = face_service.crop_face(raw_frame)
+        target = crop if crop is not None else raw_frame
+        data = self._encode_jpeg(target)
+        if data is None:
+            return None, None
+        try:
+            filename = f"intruder_{record_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
+            key = await storage.save_capture("intruders", filename, data, "image/jpeg")
+            return key, data
         except Exception as exc:
             logger.error("Failed to save intruder crop: %s", exc)
-            return None
+            return None, data
 
     async def _broadcast_verified(self, user: User, record: AttendanceRecord, dist: float):
         event = WSAttendanceEvent(

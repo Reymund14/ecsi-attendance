@@ -4,7 +4,7 @@ Attendance Router — manual override, records query, WebSocket trigger endpoint
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -19,7 +19,7 @@ from models.attendance import AttendanceRecord, AttendanceStatus, CheckType, Pro
 from models.user import RFIDCard, User, UserRole
 from schemas.attendance import AttendanceOut, AttendanceOverrideRequest, CaptureAccessOut
 from services import storage
-from services.email_notifier import send_attendance_notice
+from services.email_notifier import send_attendance_notice, send_proxy_alert_notice
 from services.face_service import FaceService, face_pipeline_available
 from websocket.manager import ws_manager
 
@@ -71,7 +71,8 @@ async def verify_live_face(
         raise HTTPException(status_code=503, detail="Face verification is unavailable on this server.")
 
     frame_bytes = await frame.read()
-    if storage.sniff_image(frame_bytes) is None:
+    frame_type = storage.sniff_image(frame_bytes)
+    if frame_type is None:
         raise HTTPException(status_code=400, detail="The camera frame is not a valid image.")
     try:
         matched, distance = await face_service.verify(
@@ -96,12 +97,27 @@ async def verify_live_face(
     await db.refresh(record)
 
     if not matched:
+        # Keep the evidence in the private bucket, same `intruders/` prefix the
+        # RFID pipeline uses, so the existing signed-url endpoint can serve it.
+        intruder_path = None
+        try:
+            filename = (
+                f"intruder_{record.id}_"
+                f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}{frame_type[1]}"
+            )
+            intruder_path = await storage.save_capture(
+                "intruders", filename, frame_bytes, frame_type[0]
+            )
+        except Exception:
+            logger.exception("Failed to save intruder capture for record %s", record.id)
+
         db.add(ProxyAuditLog(
             attendance_record_id=record.id,
             cosine_distance=distance,
             card_uid=card.card_uid,
             registered_user_id=user.id,
             terminal_id=terminal_id,
+            intruder_image_path=intruder_path,
         ))
         await db.flush()
 
@@ -122,7 +138,11 @@ async def verify_live_face(
     }
     await ws_manager.broadcast_admin_faculty(event)
     if matched:
-        await send_attendance_notice(user, record)
+        await send_attendance_notice(
+            user, record,
+            photo=frame_bytes,
+            photo_mime=frame_type[0],
+        )
     if not matched:
         await ws_manager.broadcast_admin_only({
             "event": "proxy_alert",
@@ -130,10 +150,15 @@ async def verify_live_face(
             "card_uid": card.card_uid,
             "registered_user_name": user.full_name,
             "cosine_distance": distance,
-            "intruder_image_path": None,
+            "intruder_image_path": intruder_path,
             "terminal_id": terminal_id,
             "detected_at": record.timestamp.isoformat(),
         })
+        await send_proxy_alert_notice(
+            user, record,
+            photo=frame_bytes,
+            photo_mime=frame_type[0],
+        )
 
     return {
         "matched": matched,
