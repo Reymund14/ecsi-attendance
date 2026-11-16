@@ -25,6 +25,7 @@ from models.user import RFIDCard, FaceEmbedding, User
 from schemas.attendance import WSAttendanceEvent, WSAlertEvent
 from services import storage
 from services.camera_service import camera_service
+from services.email_notifier import send_attendance_notice
 from services.face_service import FaceService, face_pipeline_available
 from websocket.manager import ws_manager
 
@@ -197,6 +198,9 @@ class AttendanceService:
                 await self._broadcast_proxy_alert(user, record, cosine_distance, intruder_path)
 
             await db.commit()
+
+            if is_match:
+                await send_attendance_notice(user, record)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

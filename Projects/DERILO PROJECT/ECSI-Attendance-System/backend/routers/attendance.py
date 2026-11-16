@@ -19,6 +19,7 @@ from models.attendance import AttendanceRecord, AttendanceStatus, CheckType, Pro
 from models.user import RFIDCard, User, UserRole
 from schemas.attendance import AttendanceOut, AttendanceOverrideRequest, CaptureAccessOut
 from services import storage
+from services.email_notifier import send_attendance_notice
 from services.face_service import FaceService, face_pipeline_available
 from websocket.manager import ws_manager
 
@@ -120,6 +121,8 @@ async def verify_live_face(
         "timestamp": record.timestamp.isoformat(),
     }
     await ws_manager.broadcast_admin_faculty(event)
+    if matched:
+        await send_attendance_notice(user, record)
     if not matched:
         await ws_manager.broadcast_admin_only({
             "event": "proxy_alert",

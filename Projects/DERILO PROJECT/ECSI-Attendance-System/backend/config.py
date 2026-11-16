@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     # Create missing buckets on startup (needs the service-role key).
     STORAGE_AUTO_CREATE_BUCKETS: bool = True
 
+    # ── Email notifications ──────────────────────────────────────
+    # Attendance emails are sent from this Gmail account, using a 16-character
+    # Google App Password (Google Account -> Security -> 2-Step Verification ->
+    # App passwords). Leave either value empty to disable email notifications.
+    NOTIFY_EMAIL: str = ""
+    NOTIFY_EMAIL_APP_PASSWORD: str = ""
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+
     # ── WebSocket ────────────────────────────────────────────────
     WS_HEARTBEAT_INTERVAL: int = 30   # seconds
 
@@ -146,6 +155,14 @@ class Settings(BaseSettings):
     @classmethod
     def _normalise_environment(cls, value: str) -> str:
         return value.strip().lower()
+
+    @field_validator("NOTIFY_EMAIL", "NOTIFY_EMAIL_APP_PASSWORD", mode="before")
+    @classmethod
+    def _clean_notify_credentials(cls, value):
+        """Google shows app passwords with spaces; the login needs them removed."""
+        if not isinstance(value, str):
+            return value
+        return value.strip().replace(" ", "")
 
     @field_validator("STORAGE_BACKEND")
     @classmethod
